@@ -19,7 +19,7 @@ the dashboard in your browser.
 
 All three launchers open the same **graphical settings window** where you can:
 
-- Choose your exchange (Binance, Coinbase, Kraken, Bybit, OKX) and enter API keys
+- Choose your exchange (Binance, Coinbase, Kraken, Bybit, OKX, MEXC) and enter API keys
 - Optionally enter an OpenAI API key for AI-powered analysis
 - Configure bot behavior (dry-run mode, check interval, confidence threshold, trade size)
 - Save settings, start/stop the bot, and open the browser dashboard
@@ -51,7 +51,7 @@ python app.py
 
 | Variable | Default | Description |
 |---|---|---|
-| `EXCHANGE_ID` | `binance` | Exchange: binance, coinbase, kraken, bybit, okx |
+| `EXCHANGE_ID` | `binance` | Exchange: binance, coinbase, kraken, bybit, okx, mexc |
 | `EXCHANGE_API_KEY` | *(empty)* | Exchange API key – leave blank for read-only mode |
 | `EXCHANGE_SECRET` | *(empty)* | Exchange API secret |
 | `OPENAI_API_KEY` | *(empty)* | OpenAI key – optional, enables GPT analysis |

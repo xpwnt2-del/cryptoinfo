@@ -43,7 +43,7 @@ ENV_EXAMPLE: Path = HERE / ".env.example"
 REQUIREMENTS: Path = HERE / "requirements.txt"
 APP_SCRIPT: Path = HERE / "app.py"
 
-EXCHANGES = ["binance", "coinbase", "kraken", "bybit", "okx"]
+EXCHANGES = ["binance", "coinbase", "kraken", "bybit", "okx", "mexc"]
 OPENAI_MODELS = ["gpt-4o-mini", "gpt-4o", "gpt-4", "gpt-3.5-turbo"]
 
 # Prefix used in .env.example for keys that have not been set yet
