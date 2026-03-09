@@ -49,6 +49,10 @@
   <div class="section-header">
     <h2>📈 Candlestick Chart</h2>
     <div class="tf-buttons">
+      <button class="tf-btn"        data-tf="1m"  onclick="changeTF(this,'1m')">1M</button>
+      <button class="tf-btn"        data-tf="5m"  onclick="changeTF(this,'5m')">5M</button>
+      <button class="tf-btn"        data-tf="15m" onclick="changeTF(this,'15m')">15M</button>
+      <button class="tf-btn"        data-tf="30m" onclick="changeTF(this,'30m')">30M</button>
       <button class="tf-btn active" data-tf="1h"  onclick="changeTF(this,'1h')">1H</button>
       <button class="tf-btn"        data-tf="4h"  onclick="changeTF(this,'4h')">4H</button>
       <button class="tf-btn"        data-tf="1d"  onclick="changeTF(this,'1d')">1D</button>
@@ -61,6 +65,15 @@
       <span class="legend-item"><span style="color:#ff9800">●</span> User Sell</span>
     </div>
   </div>
+  <!-- Drawing toolbar -->
+  <div class="draw-toolbar">
+    <span class="draw-toolbar-label">Draw:</span>
+    <button id="draw-btn-cursor"   class="draw-btn active" onclick="setDrawMode('none')"      title="Pointer / pan">↖ Cursor</button>
+    <button id="draw-btn-hline"    class="draw-btn"        onclick="setDrawMode('hline')"     title="Click to add horizontal line">➖ H-Line</button>
+    <button id="draw-btn-trendline"class="draw-btn"        onclick="setDrawMode('trendline')" title="Click two points for trend line">📐 Trend Line</button>
+    <button id="draw-btn-clear"    class="draw-btn draw-btn-danger" onclick="clearDrawings()"  title="Remove all drawn lines">✕ Clear</button>
+  </div>
+  <div id="draw-hint" class="draw-hint" style="display:none"></div>
   <div id="chart-container"></div>
   <div id="chart-tooltip" class="chart-tooltip" style="display:none"></div>
 </section>
@@ -90,7 +103,9 @@
   <div class="card">
     <h3>📰 Headlines &amp; Sentiment
       <span id="news-sentiment-badge" class="badge badge-off" style="margin-left:8px"></span>
+      <button class="btn btn-secondary btn-sm" onclick="refreshNews()" style="margin-left:auto;float:right" title="Refresh news">↺ Refresh</button>
     </h3>
+    <div id="news-latest" class="news-latest" style="display:none"></div>
     <div id="news-list"></div>
   </div>
 </section>
