@@ -27,6 +27,17 @@ class CandlestickChart {
     this._mouseX = null;
     this._mouseY = null;
 
+    // Drawing tool state
+    this.drawMode      = 'none';      // 'none' | 'hline' | 'trendline'
+    this.lines         = [];          // persisted drawn lines
+    this._drawPending  = null;        // first click for trendline
+    this._lineColors   = ['#ff9800', '#e91e63', '#9c27b0', '#00bcd4', '#8bc34a'];
+    this._lineColorIdx = 0;
+    // Cached price range for coordinate inversion (set during draw)
+    this._cachedPMin   = 0;
+    this._cachedPMax   = 1;
+    this._cachedLayout = null;
+
     this.PAD = { top: 24, right: 78, bottom: 42, left: 4 };
     this.VOL_H = 72;   // height of volume area in px
     this.C = {
@@ -65,6 +76,22 @@ class CandlestickChart {
     this.draw();
   }
 
+  /** Switch drawing mode: 'none' | 'hline' | 'trendline' */
+  setDrawMode(mode) {
+    this.drawMode     = mode;
+    this._drawPending = null;
+    this.canvas.style.cursor = mode === 'none' ? 'crosshair' : 'cell';
+    this.draw();
+  }
+
+  /** Remove all drawn lines and cancel any in-progress drawing. */
+  clearLines() {
+    this.lines         = [];
+    this._drawPending  = null;
+    this._lineColorIdx = 0;
+    this.draw();
+  }
+
   destroy() {
     this._resizeObs.disconnect();
   }
@@ -98,6 +125,64 @@ class CandlestickChart {
       this._mouseY = null;
       this.draw();
     });
+    this.canvas.addEventListener('click', e => {
+      if (this.drawMode === 'none') return;
+      const r  = this.canvas.getBoundingClientRect();
+      const mx = e.clientX - r.left;
+      const my = e.clientY - r.top;
+      this._handleDrawClick(mx, my);
+    });
+  }
+
+  /* ── coordinate helpers ─────────────────────────────────────────────────── */
+
+  /** Convert pixel y → price using the cached range from the last draw(). */
+  _yToPrice(y) {
+    const ly = this._cachedLayout;
+    if (!ly) return 0;
+    const t = (y - ly.top) / (ly.bottom - ly.top);
+    return this._cachedPMax - t * (this._cachedPMax - this._cachedPMin);
+  }
+
+  /** Convert pixel x → 0-1 ratio within the chart area. */
+  _xToRatio(x) {
+    const ly = this._cachedLayout;
+    if (!ly) return 0;
+    return Math.max(0, Math.min(1, (x - ly.left) / (ly.right - ly.left)));
+  }
+
+  _handleDrawClick(mx, my) {
+    const ly = this._cachedLayout;
+    if (!ly || mx < ly.left || mx > ly.right || my < ly.top || my > ly.bottom) return;
+
+    const price  = this._yToPrice(my);
+    const xRatio = this._xToRatio(mx);
+    const color  = this._lineColors[this._lineColorIdx % this._lineColors.length];
+
+    if (this.drawMode === 'hline') {
+      this.lines.push({ type: 'hline', price, color });
+      this._lineColorIdx++;
+      this.draw();
+    } else if (this.drawMode === 'trendline') {
+      if (!this._drawPending) {
+        // First point – store and wait for second click
+        this._drawPending = { xRatio, price };
+        this.draw();
+      } else {
+        // Second point – commit the line
+        this.lines.push({
+          type:   'trendline',
+          x1:     this._drawPending.xRatio,
+          p1:     this._drawPending.price,
+          x2:     xRatio,
+          p2:     price,
+          color,
+        });
+        this._lineColorIdx++;
+        this._drawPending = null;
+        this.draw();
+      }
+    }
   }
 
   /* ── layout helpers ─────────────────────────────────────────────────────── */
@@ -162,6 +247,11 @@ class CandlestickChart {
     const toX = i => this._toX(i, n, ly.left, ly.right);
     const toY = p => this._toY(p, pMin, pMax, ly.top, ly.bottom);
 
+    // Cache for coordinate inversion (drawing tools)
+    this._cachedPMin   = pMin;
+    this._cachedPMax   = pMax;
+    this._cachedLayout = ly;
+
     // Volume range
     let maxVol = 0;
     for (const c of candles) if (c.volume > maxVol) maxVol = c.volume;
@@ -171,8 +261,69 @@ class CandlestickChart {
     this._drawVolume(candles, toX, toVolY, ly, bw);
     this._drawCandles(candles, toX, toY, bw);
     this._drawMarkers(candles, toX, toY, n, ly);
+    this._drawUserLines(ly, toY);              // drawn lines overlay
     this._drawAxes(ly, pMin, pRange, candles, toX);
     if (this._mouseX !== null) this._drawCrosshair(ly, pMin, pMax, pRange, candles, toX, toY);
+  }
+
+  /* ── user-drawn lines ───────────────────────────────────────────────────── */
+
+  _drawUserLines(ly, toY) {
+    const { ctx } = this;
+
+    for (const line of this.lines) {
+      ctx.save();
+      ctx.strokeStyle = line.color || '#ff9800';
+      ctx.lineWidth   = 1.5;
+      ctx.setLineDash([]);
+
+      if (line.type === 'hline') {
+        const y = toY(line.price);
+        if (y >= ly.top - 2 && y <= ly.bottom + 2) {
+          ctx.beginPath();
+          ctx.moveTo(ly.left, y);
+          ctx.lineTo(ly.right, y);
+          ctx.stroke();
+          // Price label on right axis
+          ctx.font      = '10px monospace';
+          ctx.fillStyle = line.color || '#ff9800';
+          ctx.textAlign = 'left';
+          ctx.fillText(this._fmtP(line.price), ly.right + 4, y + 3);
+        }
+      } else if (line.type === 'trendline') {
+        const x1 = ly.left + line.x1 * (ly.right - ly.left);
+        const x2 = ly.left + line.x2 * (ly.right - ly.left);
+        const y1 = toY(line.p1);
+        const y2 = toY(line.p2);
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+        // Small dots at endpoints
+        ctx.fillStyle = line.color || '#ff9800';
+        ctx.beginPath(); ctx.arc(x1, y1, 3, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(x2, y2, 3, 0, Math.PI * 2); ctx.fill();
+      }
+
+      ctx.restore();
+    }
+
+    // In-progress trendline preview
+    if (this._drawPending && this._mouseX !== null && this.drawMode === 'trendline') {
+      const x1 = ly.left + this._drawPending.xRatio * (ly.right - ly.left);
+      const y1 = toY(this._drawPending.price);
+      ctx.save();
+      ctx.strokeStyle = this._lineColors[this._lineColorIdx % this._lineColors.length];
+      ctx.lineWidth   = 1.5;
+      ctx.setLineDash([5, 5]);
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(this._mouseX, this._mouseY);
+      ctx.stroke();
+      ctx.fillStyle = ctx.strokeStyle;
+      ctx.beginPath(); ctx.arc(x1, y1, 3, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+    }
   }
 
   /* ── grid ───────────────────────────────────────────────────────────────── */
@@ -431,6 +582,15 @@ let currentSymbol    = null;
 let currentTF        = '1h';
 let chartInstance    = null;
 let botPollInterval  = null;
+let pricePollTimer   = null;   // live price refresh
+
+const PRICE_POLL_INTERVAL_MS = 30000;  // refresh live price every 30 s
+
+/** Strip trailing zeros from a numeric string: "1.50000000" → "1.5" */
+function fmtAmount(n, maxDecimals = 8) {
+  if (n == null || isNaN(n)) return '—';
+  return Number(n).toFixed(maxDecimals).replace(/\.?0+$/, '');
+}
 
 function fmt(n, digits = 2) {
   if (n == null || isNaN(n)) return '—';
@@ -518,10 +678,38 @@ async function doSearch() {
 
     await loadChart(currentSymbol, currentTF);
     await loadTransactions(currentSymbol);
+    startPricePolling(currentSymbol);   // live price refresh
   } catch (err) {
     errEl.textContent = 'Error: ' + err.message;
     errEl.style.display = '';
   }
+}
+
+
+/* ════════════════════════════════════════════════════════════════════════════
+   SECTION 3b – Live price polling
+   ════════════════════════════════════════════════════════════════════════════ */
+
+function startPricePolling(symbol) {
+  if (pricePollTimer) clearInterval(pricePollTimer);
+  pricePollTimer = setInterval(() => pollPrice(symbol), PRICE_POLL_INTERVAL_MS);
+}
+
+async function pollPrice(symbol) {
+  if (!symbol) return;
+  try {
+    const data = await (await fetch(`/api/ticker/${encodeURIComponent(symbol)}`)).json();
+    if (data.error) return;
+    const priceEl = document.getElementById('ov-price');
+    if (priceEl) priceEl.textContent = fmtPrice(data.price);
+
+    const chg   = data.change_24h;
+    const chgEl = document.getElementById('ov-change');
+    if (chgEl && chg != null) {
+      chgEl.textContent = (chg >= 0 ? '+' : '') + fmt(chg, 2) + '%';
+      chgEl.className = 'tag ' + (chg >= 0 ? 'tag-green' : 'tag-red');
+    }
+  } catch (_) { /* silent – live price is best-effort */ }
 }
 
 
@@ -642,6 +830,22 @@ function renderNews(data) {
   badge.className = 'badge ' +
     (lbl === 'bullish' ? 'badge-on' : lbl === 'bearish' ? 'badge-off' : 'badge-info');
 
+  // Latest article highlight
+  const latestEl = document.getElementById('news-latest');
+  if (news.length) {
+    const latest = news[0];
+    const dot = latest.sentiment === 'bullish' ? '🟢' : latest.sentiment === 'bearish' ? '🔴' : '⚪';
+    latestEl.style.display = '';
+    latestEl.innerHTML = `
+      <div class="news-latest-label">📌 Latest</div>
+      <div>${dot} <a href="${latest.url}" target="_blank" rel="noopener noreferrer"
+           style="color:var(--text);text-decoration:none;font-weight:600">${latest.title}</a></div>
+      <div class="news-meta" style="margin-top:4px">${latest.source}${latest.published_on ? ' · ' + fmtDate(latest.published_on) : ''}</div>
+    `;
+  } else {
+    latestEl.style.display = 'none';
+  }
+
   const list = document.getElementById('news-list');
   list.innerHTML = '';
 
@@ -650,7 +854,8 @@ function renderNews(data) {
     return;
   }
 
-  news.forEach(a => {
+  // Show remaining articles (skip index 0 already shown above)
+  news.slice(1).forEach(a => {
     const dot = a.sentiment === 'bullish' ? '🟢' : a.sentiment === 'bearish' ? '🔴' : '⚪';
     const ts  = a.published_on ? fmtDate(a.published_on) : '';
     const el  = document.createElement('div');
@@ -666,6 +871,15 @@ function renderNews(data) {
     `;
     list.appendChild(el);
   });
+}
+
+async function refreshNews() {
+  if (!currentSymbol) return;
+  try {
+    const res  = await fetch(`/api/search/${encodeURIComponent(currentSymbol)}`);
+    const data = await res.json();
+    renderNews(data);
+  } catch (e) { console.error('News refresh failed:', e); }
 }
 
 
@@ -814,16 +1028,17 @@ async function deleteTransaction(id) {
 
 
 /* ════════════════════════════════════════════════════════════════════════════
-   SECTION 9 – Bot controls
+   SECTION 9 – Bot controls  (multi-bot)
    ════════════════════════════════════════════════════════════════════════════ */
 
 async function startBot() {
-  const symbol = document.getElementById('bot-symbol-input').value.trim().toUpperCase() || 'BTC';
+  const symbol    = document.getElementById('bot-symbol-input').value.trim().toUpperCase() || 'BTC';
+  const direction = document.getElementById('bot-direction-input').value || 'both';
   try {
     const res  = await fetch('/api/bot/start', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ symbol }),
+      body:    JSON.stringify({ symbol, direction }),
     });
     const data = await res.json();
     if (!res.ok && res.status !== 409) throw new Error(data.error);
@@ -833,13 +1048,16 @@ async function startBot() {
   }
 }
 
-async function stopBot() {
+async function stopBot(symbol) {
+  // symbol: specific bot to stop, or undefined to stop all
   try {
-    await fetch('/api/bot/stop', { method: 'POST' });
-    updateBotBadge(false, null);
-    clearInterval(botPollInterval);
-    botPollInterval = null;
-    document.getElementById('bot-status-panel').textContent = 'Bot stopped.';
+    const body = symbol ? { symbol } : {};
+    await fetch('/api/bot/stop', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    await fetchBotStatus();
   } catch (e) {
     console.error('Stop failed:', e);
   }
@@ -854,21 +1072,68 @@ function pollBotStatus() {
 async function fetchBotStatus() {
   try {
     const data = await (await fetch('/api/bot/status')).json();
-    updateBotBadge(data.running, data.symbol);
+    const bots = data.bots || [];
 
     document.getElementById('dry-run-badge').style.display = data.dry_run ? '' : 'none';
 
-    const panel = document.getElementById('bot-status-panel');
-    if (data.running) {
-      const last = data.last_action;
-      panel.innerHTML = `<b>Monitoring:</b> ${data.symbol} &nbsp;|&nbsp; `
-        + (last
-          ? `Last check: <b style="color:${directionColor(last.direction)}">${last.direction}</b>`
-            + ` ${last.confidence}% @ ${fmtDate(last.checked_at)}`
-          : 'Analysing…');
+    // Header badge – show first running bot or "off"
+    if (bots.length) {
+      const badge = document.getElementById('bot-badge');
+      badge.textContent = bots.length === 1
+        ? `● Bot ON (${bots[0].symbol})`
+        : `● ${bots.length} Bots ON`;
+      badge.className = 'badge badge-on';
     } else {
-      panel.textContent = 'Bot is not running.';
+      updateBotBadge(false, null);
     }
+
+    // Status panel
+    const panel = document.getElementById('bot-status-panel');
+    if (!bots.length) {
+      panel.textContent = 'No bots running.';
+      return;
+    }
+
+    // Build status panel using DOM to avoid XSS from symbol/direction values
+    panel.innerHTML = '';
+    bots.forEach(b => {
+      const last = b.last_action;
+      const dir  = b.direction !== 'both' ? ` [${b.direction}]` : '';
+
+      const row = document.createElement('div');
+      row.style.marginBottom = '6px';
+
+      const sym = document.createElement('b');
+      sym.textContent = b.symbol + dir;
+      row.appendChild(sym);
+
+      const sep = document.createElement('span');
+      sep.innerHTML = ' &nbsp;|&nbsp; ';
+      row.appendChild(sep);
+
+      if (last) {
+        const info = document.createElement('span');
+        const chk  = document.createElement('b');
+        chk.textContent = last.direction;
+        chk.style.color = directionColor(last.direction);
+        info.appendChild(document.createTextNode('Last check: '));
+        info.appendChild(chk);
+        info.appendChild(document.createTextNode(` ${last.confidence}% @ ${fmtDate(last.checked_at)}`));
+        row.appendChild(info);
+      } else {
+        row.appendChild(document.createTextNode('Analysing…'));
+      }
+
+      const stopBtn = document.createElement('button');
+      stopBtn.className = 'draw-btn';
+      stopBtn.style.cssText = 'padding:1px 6px;font-size:.7rem;margin-left:8px';
+      stopBtn.textContent = '⏹ Stop';
+      stopBtn.dataset.symbol = b.symbol;
+      stopBtn.addEventListener('click', () => stopBot(b.symbol));
+      row.appendChild(stopBtn);
+
+      panel.appendChild(row);
+    });
   } catch (_) { /* ignore network errors on poll */ }
 }
 
@@ -935,7 +1200,210 @@ async function executeSellAll() {
 
 
 /* ════════════════════════════════════════════════════════════════════════════
-   SECTION 11 – Init
+   SECTION 11 – Drawing tools
+   ════════════════════════════════════════════════════════════════════════════ */
+
+function setDrawMode(mode) {
+  if (!chartInstance) return;
+  chartInstance.setDrawMode(mode);
+
+  // Update toolbar button states
+  ['cursor', 'hline', 'trendline'].forEach(m => {
+    const btn = document.getElementById(`draw-btn-${m}`);
+    if (btn) btn.classList.toggle('active', m === mode || (mode === 'none' && m === 'cursor'));
+  });
+
+  // Show hint for modes that need instructions
+  const hint = document.getElementById('draw-hint');
+  if (mode === 'hline') {
+    hint.textContent = 'Click anywhere on the chart to place a horizontal level.';
+    hint.style.display = '';
+  } else if (mode === 'trendline') {
+    hint.textContent = 'Click two points on the chart to draw a trend line.';
+    hint.style.display = '';
+  } else {
+    hint.style.display = 'none';
+  }
+}
+
+function clearDrawings() {
+  if (chartInstance) chartInstance.clearLines();
+  document.getElementById('draw-hint').style.display = 'none';
+}
+
+
+/* ════════════════════════════════════════════════════════════════════════════
+   SECTION 12 – Wallet
+   ════════════════════════════════════════════════════════════════════════════ */
+
+function toggleWallet() {
+  const sec = document.getElementById('wallet-section');
+  const visible = sec.style.display !== 'none';
+  sec.style.display = visible ? 'none' : '';
+  if (!visible) loadWallet();
+}
+
+async function loadWallet() {
+  const tbody     = document.getElementById('wallet-tbody');
+  const totalEl   = document.getElementById('wallet-total');
+  const errorEl   = document.getElementById('wallet-error');
+  tbody.innerHTML = '<tr><td colspan="5" class="wallet-empty"><span class="loading">Loading…</span></td></tr>';
+  totalEl.textContent = '';
+  errorEl.style.display = 'none';
+
+  try {
+    const data = await (await fetch('/api/wallet')).json();
+
+    if (data.exchange_error) {
+      errorEl.textContent = '⚠ Exchange balances unavailable: ' + data.exchange_error;
+      errorEl.style.display = '';
+    }
+
+    // Merge exchange + deposit assets
+    const allAssets = new Set([
+      ...Object.keys(data.exchange_balances || {}),
+      ...Object.keys(data.deposit_totals    || {}),
+    ]);
+
+    if (!allAssets.size) {
+      tbody.innerHTML = '<tr><td colspan="5" class="wallet-empty">No assets found. Configure API keys or record a deposit.</td></tr>';
+      totalEl.textContent = '';
+      return;
+    }
+
+    const prices     = data.prices            || {};
+    const exchBal    = data.exchange_balances  || {};
+    const depTotals  = data.deposit_totals     || {};
+
+    tbody.innerHTML = '';
+    let grandTotal = 0;
+
+    [...allAssets].sort().forEach(asset => {
+      const exchAmt = exchBal[asset]   || 0;
+      const depAmt  = depTotals[asset] || 0;
+      const price   = prices[asset]    || 0;
+      const primary = exchAmt || depAmt;
+      const usdVal  = primary * price;
+      grandTotal += usdVal;
+
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td class="wallet-asset">${asset}</td>
+        <td class="num">${exchAmt ? fmtAmount(exchAmt) : '—'}</td>
+        <td class="num">${depAmt  ? fmtAmount(depAmt)  : '—'}</td>
+        <td class="num">${price   ? fmtPrice(price) : '—'}</td>
+        <td class="num">${usdVal  ? fmtPrice(usdVal) : '—'}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+    totalEl.textContent = `Estimated Total: ${fmtPrice(data.total_usd ?? grandTotal)}`;
+  } catch (e) {
+    tbody.innerHTML = '<tr><td colspan="5" class="wallet-empty" style="color:var(--red)">Failed to load wallet.</td></tr>';
+  }
+
+  await loadDepositHistory();
+}
+
+async function loadDepositHistory() {
+  const list = document.getElementById('deposit-list');
+  try {
+    const deps = await (await fetch('/api/wallet/deposits')).json();
+    renderDepositList(deps);
+  } catch (_) {
+    list.innerHTML = '<p class="tx-empty" style="color:var(--red)">Failed to load deposits.</p>';
+  }
+}
+
+function renderDepositList(deps) {
+  const list = document.getElementById('deposit-list');
+  list.innerHTML = '';
+  if (!deps.length) {
+    list.innerHTML = '<p class="tx-empty">No deposits recorded yet.</p>';
+    return;
+  }
+  deps.forEach(d => {
+    const el = document.createElement('div');
+    el.className = 'deposit-item';
+    el.innerHTML = `
+      <span class="dep-asset">+${d.asset}</span>
+      <span class="dep-amt">${fmtAmount(d.amount)} ${d.asset}</span>
+      ${d.network  ? `<span class="dep-net">${d.network}</span>` : ''}
+      ${d.tx_hash  ? `<span class="dep-hash" title="${d.tx_hash}">${d.tx_hash}</span>` : ''}
+      <span style="color:var(--text-dim);font-size:.7rem">${fmtDate(d.timestamp)}</span>
+      ${d.note ? `<span style="color:var(--text-dim);font-size:.72rem">${d.note}</span>` : ''}
+      <button class="dep-del" data-id="${d.id}" title="Delete">✕</button>
+    `;
+    el.querySelector('.dep-del').addEventListener('click', () => deleteDeposit(d.id));
+    list.appendChild(el);
+  });
+}
+
+function openDepositModal() {
+  document.getElementById('dep-result').style.display = 'none';
+  document.getElementById('deposit-form').reset();
+  document.getElementById('deposit-modal').style.display = 'flex';
+}
+
+function closeDepositModal() {
+  document.getElementById('deposit-modal').style.display = 'none';
+}
+
+async function submitDeposit(e) {
+  e.preventDefault();
+  const resultEl = document.getElementById('dep-result');
+  resultEl.style.display = 'none';
+
+  const payload = {
+    asset:   document.getElementById('dep-asset').value.trim().toUpperCase(),
+    amount:  parseFloat(document.getElementById('dep-amount').value),
+    network: document.getElementById('dep-network').value.trim() || null,
+    tx_hash: document.getElementById('dep-txhash').value.trim()  || null,
+    note:    document.getElementById('dep-note').value.trim()    || null,
+  };
+
+  if (!payload.asset || isNaN(payload.amount) || payload.amount <= 0) {
+    resultEl.className = 'tx-result error';
+    resultEl.textContent = 'Please enter a valid asset and positive amount.';
+    resultEl.style.display = '';
+    return;
+  }
+
+  try {
+    const res  = await fetch('/api/wallet/deposits', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Server error');
+
+    resultEl.className = 'tx-result success';
+    resultEl.textContent = `✓ Deposit #${data.id} recorded (${data.amount} ${data.asset}).`;
+    resultEl.style.display = '';
+    document.getElementById('deposit-form').reset();
+
+    await loadWallet();  // refresh balances + deposit history
+  } catch (err) {
+    resultEl.className = 'tx-result error';
+    resultEl.textContent = 'Error: ' + err.message;
+    resultEl.style.display = '';
+  }
+}
+
+async function deleteDeposit(id) {
+  if (!confirm('Delete this deposit record?')) return;
+  try {
+    await fetch(`/api/wallet/deposits/${id}`, { method: 'DELETE' });
+    await loadWallet();
+  } catch (e) {
+    console.error('Delete deposit failed:', e);
+  }
+}
+
+
+/* ════════════════════════════════════════════════════════════════════════════
+   SECTION 13 – Init
    ════════════════════════════════════════════════════════════════════════════ */
 
 (function init() {

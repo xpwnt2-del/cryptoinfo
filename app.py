@@ -42,13 +42,8 @@ db = Database()
 exchange = ExchangeManager()
 
 _bot_lock = threading.Lock()
-_bot_state: dict = {
-    "running": False,
-    "symbol": None,
-    "thread": None,
-    "last_action": None,
-    "started_at": None,
-}
+# Multi-bot state: keyed by normalised symbol
+_bot_states: dict[str, dict] = {}
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -56,6 +51,12 @@ _TF_INTERVAL_SECONDS = {
     "1m": 60, "5m": 300, "15m": 900, "30m": 1800,
     "1h": 3600, "4h": 14400, "1d": 86400, "1w": 604800,
 }
+
+
+def _opt_str(value) -> Optional[str]:
+    """Convert a value to str or None; empty strings become None."""
+    s = str(value or "").strip()
+    return s if s else None
 
 
 def _floor_ts(ts_seconds: float, timeframe: str) -> int:
@@ -150,12 +151,16 @@ def _bot_tick(symbol: str) -> None:
     result = analyse(symbol, price, snapshots, news, sentiment, metadata)
 
     with _bot_lock:
-        _bot_state["last_action"] = {
-            "symbol": symbol,
-            "direction": result.overall_direction,
-            "confidence": result.overall_confidence,
-            "checked_at": datetime.now(timezone.utc).isoformat(),
-        }
+        if symbol in _bot_states:
+            _bot_states[symbol]["last_action"] = {
+                "symbol": symbol,
+                "direction": result.overall_direction,
+                "confidence": result.overall_confidence,
+                "checked_at": datetime.now(timezone.utc).isoformat(),
+            }
+            direction_filter = _bot_states[symbol].get("direction", "both")
+        else:
+            direction_filter = "both"
 
     if (
         result.overall_confidence >= Config.MIN_CONFIDENCE
@@ -163,6 +168,24 @@ def _bot_tick(symbol: str) -> None:
         and Config.EXCHANGE_API_KEY
     ):
         side = "buy" if result.overall_direction == "bullish" else "sell"
+
+        # Respect the direction filter configured when the bot was started:
+        # "long"  → only buy (go long)
+        # "short" → only sell (go short/close)
+        # "both"  → trade in either direction
+        if direction_filter == "long" and side != "buy":
+            logger.info(
+                "Bot skipping %s signal for %s (direction_filter=%s)",
+                side, symbol, direction_filter,
+            )
+            return
+        if direction_filter == "short" and side != "sell":
+            logger.info(
+                "Bot skipping %s signal for %s (direction_filter=%s)",
+                side, symbol, direction_filter,
+            )
+            return
+
         trade_amount = Config.BOT_TRADE_AMOUNT
         try:
             if side == "buy":
@@ -177,11 +200,11 @@ def _bot_tick(symbol: str) -> None:
                 price=trade_price,
                 amount=trade_amount,
                 source="bot",
-                note=f"Auto-trade: {result.overall_direction} {result.overall_confidence}%",
+                note=f"Auto-trade ({direction_filter}): {result.overall_direction} {result.overall_confidence}%",
             )
             logger.info(
-                "Bot placed %s order for %s at %.4f (conf=%d%%)",
-                side, symbol, trade_price, result.overall_confidence,
+                "Bot placed %s order for %s at %.4f (conf=%d%%, dir=%s)",
+                side, symbol, trade_price, result.overall_confidence, direction_filter,
             )
         except Exception as exc:
             logger.warning("Bot trade failed: %s", exc)
@@ -192,6 +215,31 @@ def _bot_tick(symbol: str) -> None:
 @app.route("/")
 def index() -> str:
     return render_template("index.html")
+
+
+@app.route("/api/ticker/<symbol>")
+def get_ticker_price(symbol: str):
+    """Lightweight endpoint for live price polling.
+
+    Returns just the latest price + 24-hour change so the UI can refresh
+    the coin overview without re-running the full analysis.
+    """
+    sym = normalise_symbol(symbol)
+    try:
+        ticker = exchange.get_ticker(sym)
+        return jsonify(
+            {
+                "symbol": sym,
+                "price": ticker.get("last"),
+                "change_24h": ticker.get("percentage"),
+                "high_24h": ticker.get("high"),
+                "low_24h": ticker.get("low"),
+                "volume_24h": ticker.get("quoteVolume"),
+            }
+        )
+    except Exception as exc:
+        logger.warning("Ticker fetch failed for %s: %s", sym, exc)
+        return jsonify({"error": str(exc)}), 502
 
 
 @app.route("/api/search/<symbol>")
@@ -384,6 +432,118 @@ def get_balance():
         return jsonify({"error": str(exc), "balances": {}}), 502
 
 
+@app.route("/api/wallet")
+def get_wallet():
+    """Return combined wallet view: exchange balances + deposit-based holdings.
+
+    Exchange balances are fetched when API keys are configured; otherwise an
+    empty dict is returned.  Deposit totals are always available (local DB).
+
+    Response shape::
+
+        {
+          "exchange_balances": {"BTC": 0.5, "USDT": 1200.0, ...},
+          "deposit_totals":    {"BTC": 1.0, "ETH": 2.5, ...},
+          "prices":            {"BTC": 67000.0, "ETH": 3500.0, ...},
+          "total_usd":         <estimated total portfolio value>,
+          "exchange_error":    null | "<error message>",
+        }
+    """
+    # Exchange balances (requires API keys)
+    exchange_balances: dict[str, float] = {}
+    exchange_error: Optional[str] = None
+    try:
+        raw = exchange.get_balance()
+        exchange_balances = {
+            asset: float(amt)
+            for asset, amt in raw.get("total", {}).items()
+            if float(amt or 0) > 0
+        }
+    except PermissionError as exc:
+        exchange_error = str(exc)
+    except Exception as exc:
+        exchange_error = str(exc)
+
+    # Deposit totals from local database
+    deposits = db.get_deposits()
+    deposit_totals: dict[str, float] = {}
+    for dep in deposits:
+        asset = dep["asset"]
+        deposit_totals[asset] = deposit_totals.get(asset, 0.0) + dep["amount"]
+
+    # Collect all unique non-USDT assets to price
+    all_assets = set(exchange_balances) | set(deposit_totals)
+    prices: dict[str, float] = {}
+    for asset in all_assets:
+        if asset == "USDT":
+            prices[asset] = 1.0
+            continue
+        try:
+            ticker = exchange.get_ticker(asset)
+            p = ticker.get("last")
+            if p:
+                prices[asset] = float(p)
+        except Exception:
+            pass  # price unavailable – skip
+
+    # Estimate total USD value.
+    # Prefer live exchange balances when available (exchange_error is None);
+    # fall back to locally-tracked deposit totals so the total is always shown.
+    holdings = exchange_balances if exchange_error is None and exchange_balances else deposit_totals
+    total_usd = sum(
+        amount * prices.get(asset, 0.0)
+        for asset, amount in holdings.items()
+    )
+
+    return jsonify(
+        {
+            "exchange_balances": exchange_balances,
+            "deposit_totals": deposit_totals,
+            "prices": prices,
+            "total_usd": total_usd,
+            "exchange_error": exchange_error,
+        }
+    )
+
+
+@app.route("/api/wallet/deposits", methods=["GET"])
+def list_deposits():
+    asset = request.args.get("asset")
+    if asset:
+        asset = normalise_symbol(asset)
+    return jsonify(db.get_deposits(asset))
+
+
+@app.route("/api/wallet/deposits", methods=["POST"])
+def create_deposit():
+    data = request.get_json(force=True, silent=True) or {}
+    required = ("asset", "amount")
+    missing = [f for f in required if not data.get(f)]
+    if missing:
+        return jsonify({"error": f"Missing fields: {', '.join(missing)}"}), 400
+
+    try:
+        dep = db.add_deposit(
+            asset=normalise_symbol(str(data["asset"])),
+            amount=float(data["amount"]),
+            network=_opt_str(data.get("network")),
+            tx_hash=_opt_str(data.get("tx_hash")),
+            note=_opt_str(data.get("note")),
+        )
+    except (ValueError, TypeError) as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    return jsonify(dep), 201
+
+
+@app.route("/api/wallet/deposits/<int:dep_id>", methods=["DELETE"])
+def delete_deposit(dep_id: int):
+    deleted = db.delete_deposit(dep_id)
+    if not deleted:
+        return jsonify({"error": "Deposit not found"}), 404
+    return jsonify({"deleted": dep_id})
+
+
 @app.route("/api/sell-all", methods=["POST"])
 def sell_all():
     data = request.get_json(force=True, silent=True) or {}
@@ -421,58 +581,82 @@ def sell_all():
 def bot_start():
     data = request.get_json(force=True, silent=True) or {}
     symbol = normalise_symbol(str(data.get("symbol", "BTC")))
+    # direction: "both" (default), "long" (buy only), "short" (sell only)
+    direction = str(data.get("direction", "both")).lower()
+    if direction not in ("both", "long", "short"):
+        direction = "both"
 
     with _bot_lock:
-        if _bot_state["running"]:
-            return jsonify({"error": "Bot already running", "symbol": _bot_state["symbol"]}), 409
+        if symbol in _bot_states and _bot_states[symbol].get("running"):
+            return jsonify({"error": "Bot already running for this symbol", "symbol": symbol}), 409
 
         stop_event = threading.Event()
         thread = threading.Thread(
             target=_bot_loop, args=(symbol, stop_event), daemon=True
         )
-        _bot_state.update(
-            {
-                "running": True,
-                "symbol": symbol,
-                "thread": thread,
-                "stop_event": stop_event,
-                "started_at": datetime.now(timezone.utc).isoformat(),
-                "last_action": None,
-            }
-        )
+        _bot_states[symbol] = {
+            "running": True,
+            "symbol": symbol,
+            "thread": thread,
+            "stop_event": stop_event,
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "last_action": None,
+            "direction": direction,
+        }
         thread.start()
 
-    logger.info("Bot started for %s", symbol)
-    return jsonify({"status": "started", "symbol": symbol})
+    logger.info("Bot started for %s (direction=%s)", symbol, direction)
+    return jsonify({"status": "started", "symbol": symbol, "direction": direction})
 
 
 @app.route("/api/bot/stop", methods=["POST"])
 def bot_stop():
+    data = request.get_json(force=True, silent=True) or {}
+    # If a symbol is supplied, stop only that bot; otherwise stop all.
+    raw_symbol = data.get("symbol", "")
+    symbol = normalise_symbol(str(raw_symbol)) if raw_symbol else None
+
+    stopped: list[str] = []
     with _bot_lock:
-        if not _bot_state["running"]:
-            return jsonify({"status": "not_running"}), 200
+        targets = [symbol] if symbol else list(_bot_states.keys())
+        for sym in targets:
+            state = _bot_states.get(sym)
+            if state and state.get("running"):
+                se: threading.Event = state.get("stop_event")
+                if se:
+                    se.set()
+                state["running"] = False
+                stopped.append(sym)
 
-        stop_event: threading.Event = _bot_state.get("stop_event")
-        if stop_event:
-            stop_event.set()
+    for sym in stopped:
+        logger.info("Bot stopped for %s", sym)
 
-        _bot_state.update(
-            {"running": False, "symbol": None, "thread": None, "stop_event": None}
-        )
+    if not stopped and symbol:
+        return jsonify({"status": "not_running", "symbol": symbol}), 200
 
-    logger.info("Bot stopped")
-    return jsonify({"status": "stopped"})
+    return jsonify({"status": "stopped", "symbols": stopped})
 
 
 @app.route("/api/bot/status")
 def bot_status():
     with _bot_lock:
+        bots = [
+            {
+                "symbol": sym,
+                "running": state["running"],
+                "started_at": state["started_at"],
+                "last_action": state["last_action"],
+                "direction": state.get("direction", "both"),
+            }
+            for sym, state in _bot_states.items()
+            if state.get("running")
+        ]
         return jsonify(
             {
-                "running": _bot_state["running"],
-                "symbol": _bot_state["symbol"],
-                "started_at": _bot_state["started_at"],
-                "last_action": _bot_state["last_action"],
+                "bots": bots,
+                # Legacy fields for backwards compatibility
+                "running": bool(bots),
+                "symbol": bots[0]["symbol"] if bots else None,
                 "dry_run": Config.DRY_RUN,
             }
         )

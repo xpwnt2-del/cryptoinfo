@@ -22,6 +22,16 @@ CREATE TABLE IF NOT EXISTS transactions (
                        CHECK(source IN ('bot','user')),
     note       TEXT
 );
+
+CREATE TABLE IF NOT EXISTS deposits (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    asset      TEXT    NOT NULL,
+    amount     REAL    NOT NULL CHECK(amount > 0),
+    timestamp  TEXT    NOT NULL,
+    network    TEXT,
+    tx_hash    TEXT,
+    note       TEXT
+);
 """
 
 
@@ -105,6 +115,63 @@ class Database:
         with self._connect() as conn:
             cur = conn.execute(
                 "DELETE FROM transactions WHERE id = ?", (transaction_id,)
+            )
+            conn.commit()
+        return cur.rowcount > 0
+
+    # ── deposits ──────────────────────────────────────────────────────────
+
+    def add_deposit(
+        self,
+        asset: str,
+        amount: float,
+        network: Optional[str] = None,
+        tx_hash: Optional[str] = None,
+        note: Optional[str] = None,
+    ) -> dict:
+        """Record a deposit of *amount* units of *asset*."""
+        if not asset:
+            raise ValueError("asset must not be empty")
+        if amount <= 0:
+            raise ValueError("amount must be positive")
+
+        timestamp = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO deposits (asset, amount, timestamp, network, tx_hash, note)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (asset.upper(), amount, timestamp, network, tx_hash, note),
+            )
+            conn.commit()
+            row_id = cur.lastrowid
+        return self.get_deposit(row_id)
+
+    def get_deposit(self, deposit_id: int) -> Optional[dict]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM deposits WHERE id = ?", (deposit_id,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def get_deposits(self, asset: Optional[str] = None) -> list[dict]:
+        with self._connect() as conn:
+            if asset:
+                rows = conn.execute(
+                    "SELECT * FROM deposits WHERE asset = ? ORDER BY timestamp DESC",
+                    (asset.upper(),),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM deposits ORDER BY timestamp DESC"
+                ).fetchall()
+        return [dict(r) for r in rows]
+
+    def delete_deposit(self, deposit_id: int) -> bool:
+        with self._connect() as conn:
+            cur = conn.execute(
+                "DELETE FROM deposits WHERE id = ?", (deposit_id,)
             )
             conn.commit()
         return cur.rowcount > 0

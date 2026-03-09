@@ -117,3 +117,93 @@ class TestDeleteTransaction:
         db.add_transaction("BTC", "sell", 51000.0, 0.01)
         db.delete_transaction(tx1["id"])
         assert len(db.get_transactions("BTC")) == 1
+
+
+class TestAddDeposit:
+    def test_returns_dict(self, db):
+        dep = db.add_deposit("BTC", 0.5)
+        assert isinstance(dep, dict)
+
+    def test_id_assigned(self, db):
+        dep = db.add_deposit("ETH", 1.0)
+        assert dep["id"] is not None and dep["id"] > 0
+
+    def test_asset_uppercased(self, db):
+        dep = db.add_deposit("btc", 0.5)
+        assert dep["asset"] == "BTC"
+
+    def test_amount_stored(self, db):
+        dep = db.add_deposit("SOL", 10.0)
+        assert abs(dep["amount"] - 10.0) < 1e-9
+
+    def test_optional_fields_stored(self, db):
+        dep = db.add_deposit("BTC", 1.0, network="BTC", tx_hash="abc123", note="from Coinbase")
+        assert dep["network"]  == "BTC"
+        assert dep["tx_hash"]  == "abc123"
+        assert dep["note"]     == "from Coinbase"
+
+    def test_invalid_amount_raises(self, db):
+        with pytest.raises(ValueError):
+            db.add_deposit("BTC", -1.0)
+
+    def test_zero_amount_raises(self, db):
+        with pytest.raises(ValueError):
+            db.add_deposit("BTC", 0)
+
+    def test_empty_asset_raises(self, db):
+        with pytest.raises(ValueError):
+            db.add_deposit("", 1.0)
+
+
+class TestGetDeposits:
+    def test_empty_on_fresh_db(self, db):
+        assert db.get_deposits() == []
+
+    def test_returns_all(self, db):
+        db.add_deposit("BTC", 0.5)
+        db.add_deposit("ETH", 1.0)
+        assert len(db.get_deposits()) == 2
+
+    def test_filter_by_asset(self, db):
+        db.add_deposit("BTC", 0.5)
+        db.add_deposit("ETH", 1.0)
+        btc_deps = db.get_deposits("BTC")
+        assert len(btc_deps) == 1
+        assert btc_deps[0]["asset"] == "BTC"
+
+    def test_filter_case_insensitive(self, db):
+        db.add_deposit("BTC", 0.5)
+        assert len(db.get_deposits("btc")) == 1
+
+    def test_ordered_newest_first(self, db):
+        db.add_deposit("BTC", 0.1)
+        db.add_deposit("BTC", 0.2)
+        deps = db.get_deposits("BTC")
+        assert deps[0]["id"] > deps[1]["id"]
+
+
+class TestGetDeposit:
+    def test_returns_dict(self, db):
+        dep = db.add_deposit("BTC", 0.5)
+        fetched = db.get_deposit(dep["id"])
+        assert fetched is not None
+        assert fetched["id"] == dep["id"]
+
+    def test_missing_returns_none(self, db):
+        assert db.get_deposit(9999) is None
+
+
+class TestDeleteDeposit:
+    def test_delete_existing(self, db):
+        dep = db.add_deposit("BTC", 0.5)
+        assert db.delete_deposit(dep["id"]) is True
+        assert db.get_deposit(dep["id"]) is None
+
+    def test_delete_missing_returns_false(self, db):
+        assert db.delete_deposit(9999) is False
+
+    def test_delete_reduces_count(self, db):
+        dep1 = db.add_deposit("BTC", 0.1)
+        db.add_deposit("BTC", 0.2)
+        db.delete_deposit(dep1["id"])
+        assert len(db.get_deposits("BTC")) == 1
