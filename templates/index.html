@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CryptoBotAI</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+
+<!-- ═══════════════════════════ HEADER ══════════════════════════════════════ -->
+<header class="header">
+  <div class="header-left">
+    <span class="logo">🤖 CryptoBotAI</span>
+    <span id="bot-badge" class="badge badge-off">● Bot Off</span>
+    <span id="dry-run-badge" class="badge badge-info" style="display:none">DRY RUN</span>
+  </div>
+  <div class="header-right">
+    <button id="btn-stop-bot" class="btn btn-danger" onclick="stopBot()">⏹ Stop Bot</button>
+    <button id="btn-sell-all" class="btn btn-warning" onclick="confirmSellAll()">💵 Sell All → USDT</button>
+  </div>
+</header>
+
+<!-- ═══════════════════════════ SEARCH ══════════════════════════════════════ -->
+<section class="search-section">
+  <div class="search-bar">
+    <input id="search-input" type="text" placeholder="Enter symbol (BTC, ETH, SOL…)" autocomplete="off" />
+    <button class="btn btn-primary" onclick="doSearch()">🔍 Analyse</button>
+  </div>
+  <div id="search-error" class="error-msg" style="display:none"></div>
+</section>
+
+<!-- ═══════════════════════════ COIN OVERVIEW ════════════════════════════════ -->
+<section id="overview-section" class="section" style="display:none">
+  <div class="overview-card" id="overview-card">
+    <div class="coin-name" id="ov-name">—</div>
+    <div class="coin-price" id="ov-price">—</div>
+    <div class="coin-meta">
+      <span id="ov-change" class="tag">—</span>
+      <span id="ov-vol" class="tag-gray">Vol: —</span>
+      <span id="ov-cap" class="tag-gray">MCap: —</span>
+      <span id="ov-rank" class="tag-gray">Rank: —</span>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════ CHART ════════════════════════════════════════ -->
+<section id="chart-section" class="section" style="display:none">
+  <div class="section-header">
+    <h2>📈 Candlestick Chart</h2>
+    <div class="tf-buttons">
+      <button class="tf-btn active" data-tf="1h"  onclick="changeTF(this,'1h')">1H</button>
+      <button class="tf-btn"        data-tf="4h"  onclick="changeTF(this,'4h')">4H</button>
+      <button class="tf-btn"        data-tf="1d"  onclick="changeTF(this,'1d')">1D</button>
+      <button class="tf-btn"        data-tf="1w"  onclick="changeTF(this,'1w')">1W</button>
+    </div>
+    <div class="legend">
+      <span class="legend-item"><span style="color:#26a69a">▲</span> Bot Buy</span>
+      <span class="legend-item"><span style="color:#ef5350">▼</span> Bot Sell</span>
+      <span class="legend-item"><span style="color:#2196f3">●</span> User Buy</span>
+      <span class="legend-item"><span style="color:#ff9800">●</span> User Sell</span>
+    </div>
+  </div>
+  <div id="chart-container"></div>
+  <div id="chart-tooltip" class="chart-tooltip" style="display:none"></div>
+</section>
+
+<!-- ═══════════════════════════ ANALYSIS GRID ════════════════════════════════ -->
+<section id="analysis-section" class="section" style="display:none">
+  <div class="grid-2">
+
+    <!-- AI Predictions -->
+    <div class="card">
+      <h3>🧠 AI Predictions <span id="ai-badge" class="ai-badge" style="display:none">GPT</span></h3>
+      <div id="predictions-list"></div>
+      <p id="ai-summary" class="summary-text"></p>
+    </div>
+
+    <!-- Technical Indicators -->
+    <div class="card">
+      <h3>📊 Technical Indicators</h3>
+      <div id="indicators-panel"></div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ═══════════════════════════ NEWS ════════════════════════════════════════ -->
+<section id="news-section" class="section" style="display:none">
+  <div class="card">
+    <h3>📰 Headlines &amp; Sentiment
+      <span id="news-sentiment-badge" class="badge badge-off" style="margin-left:8px"></span>
+    </h3>
+    <div id="news-list"></div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════ BOTTOM GRID ══════════════════════════════════ -->
+<section id="bottom-section" class="section" style="display:none">
+  <div class="grid-2">
+
+    <!-- Add Transaction -->
+    <div class="card">
+      <h3>➕ Add Transaction</h3>
+      <form id="tx-form" onsubmit="addTransaction(event)">
+        <div class="form-row">
+          <label>Symbol</label>
+          <input id="tx-symbol" type="text" placeholder="BTC" required />
+        </div>
+        <div class="form-row">
+          <label>Side</label>
+          <select id="tx-side">
+            <option value="buy">Buy</option>
+            <option value="sell">Sell</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label>Price (USDT)</label>
+          <input id="tx-price" type="number" step="any" min="0" placeholder="45000" required />
+        </div>
+        <div class="form-row">
+          <label>Amount</label>
+          <input id="tx-amount" type="number" step="any" min="0" placeholder="0.01" required />
+        </div>
+        <div class="form-row">
+          <label>Note (optional)</label>
+          <input id="tx-note" type="text" placeholder="Manual entry" />
+        </div>
+        <button type="submit" class="btn btn-primary" style="width:100%">Add Transaction</button>
+        <div id="tx-result" class="tx-result" style="display:none"></div>
+      </form>
+    </div>
+
+    <!-- Transaction History -->
+    <div class="card">
+      <h3>📋 Transaction History <span id="tx-symbol-filter" class="tag-gray"></span></h3>
+      <div id="tx-list" class="tx-list"></div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ═══════════════════════════ BOT CONTROLS ═════════════════════════════════ -->
+<section class="section">
+  <div class="card">
+    <h3>🤖 Bot Controls</h3>
+    <div class="bot-controls">
+      <div>
+        <label>Symbol to monitor</label>
+        <input id="bot-symbol-input" type="text" placeholder="BTC" value="BTC" style="width:100px" />
+      </div>
+      <button class="btn btn-success" onclick="startBot()">▶ Start Bot</button>
+      <button class="btn btn-danger" onclick="stopBot()">⏹ Stop Bot</button>
+    </div>
+    <div id="bot-status-panel" class="bot-status-panel"></div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════ SELL-ALL MODAL ═══════════════════════════════ -->
+<div id="sell-modal" class="modal-backdrop" style="display:none" onclick="closeSellModal()">
+  <div class="modal" onclick="event.stopPropagation()">
+    <h2>⚠️ Sell All to USDT</h2>
+    <p>This will convert <strong>all non-USDT holdings</strong> to USDT.</p>
+    <div class="form-row">
+      <label>
+        <input type="checkbox" id="dry-run-check" checked />
+        Dry run (simulate only, no real orders)
+      </label>
+    </div>
+    <div class="modal-buttons">
+      <button class="btn btn-danger" onclick="executeSellAll()">Confirm Sell All</button>
+      <button class="btn btn-secondary" onclick="closeSellModal()">Cancel</button>
+    </div>
+    <div id="sell-result" style="margin-top:12px"></div>
+  </div>
+</div>
+
+<script src="/static/js/app.js"></script>
+</body>
+</html>
