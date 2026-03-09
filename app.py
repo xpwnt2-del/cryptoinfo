@@ -45,6 +45,9 @@ _bot_lock = threading.Lock()
 # Multi-bot state: keyed by normalised symbol
 _bot_states: dict[str, dict] = {}
 
+# Maximum number of symbols to scan in /api/ai/recommend
+_MAX_RECOMMENDATION_SYMBOLS = 10
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 _TF_INTERVAL_SECONDS = {
@@ -246,6 +249,7 @@ def get_ticker_price(symbol: str):
 def search(symbol: str):
     """Full analysis for a symbol: ticker, technicals, news, AI predictions."""
     sym = normalise_symbol(symbol)
+    agent = request.args.get("agent", "auto")
 
     # Fetch OHLCV for multiple timeframes
     tf_data: dict[str, list] = {}
@@ -286,7 +290,7 @@ def search(symbol: str):
     metadata = get_market_metadata(sym)
 
     # AI analysis
-    result = analyse(sym, price, snapshots, news, sentiment, metadata)
+    result = analyse(sym, price, snapshots, news, sentiment, metadata, agent=agent)
 
     # Serialise snapshots
     def _snap_dict(s):
@@ -308,6 +312,15 @@ def search(symbol: str):
             "bb_lower": round(s.bb_lower, 4) if s.bb_lower else None,
         }
 
+    def _pred_dict(p):
+        return {
+            "timeframe": p.timeframe,
+            "direction": p.direction,
+            "confidence": p.confidence,
+            "reasoning": p.reasoning,
+            "source": p.source,
+        }
+
     return jsonify(
         {
             "symbol": sym,
@@ -316,18 +329,13 @@ def search(symbol: str):
             "indicators": {tf: _snap_dict(s) for tf, s in snapshots.items()},
             "news": news,
             "news_sentiment": sentiment,
-            "predictions": [
-                {
-                    "timeframe": p.timeframe,
-                    "direction": p.direction,
-                    "confidence": p.confidence,
-                    "reasoning": p.reasoning,
-                }
-                for p in result.predictions
-            ],
+            "predictions": [_pred_dict(p) for p in result.predictions],
+            "openai_predictions": [_pred_dict(p) for p in result.openai_predictions],
+            "rule_based_predictions": [_pred_dict(p) for p in result.rule_based_predictions],
             "overall_direction": result.overall_direction,
             "overall_confidence": result.overall_confidence,
             "ai_powered": result.ai_powered,
+            "agent": result.agent,
             "summary": result.summary,
         }
     )
@@ -575,6 +583,91 @@ def sell_all():
                         pass
 
     return jsonify({"dry_run": dry_run, "orders": results})
+
+
+@app.route("/api/ai/recommend")
+def ai_recommend():
+    """Return AI-recommended crypto picks for 1h, 1d, and 1w timeframes.
+
+    Analyses a basket of popular coins and returns the top bullish pick for
+    each timeframe based on the currently configured AI agent.
+
+    Query params:
+        agent  : 'auto' (default) | 'openai' | 'rule-based' | 'both'
+        symbols: comma-separated list of symbols to scan
+                 (default: BTC,ETH,SOL,BNB,XRP,ADA,AVAX,DOGE,DOT,MATIC)
+    """
+    agent = request.args.get("agent", "auto")
+    raw_symbols = request.args.get(
+        "symbols", "BTC,ETH,SOL,BNB,XRP,ADA,AVAX,DOGE,DOT,MATIC"
+    )
+    symbols = [normalise_symbol(s.strip()) for s in raw_symbols.split(",") if s.strip()][:_MAX_RECOMMENDATION_SYMBOLS]
+
+    results_by_tf: dict[str, list] = {"1h": [], "1d": [], "1w": []}
+
+    for sym in symbols:
+        try:
+            # Fetch OHLCV and compute technicals
+            tf_data: dict[str, list] = {}
+            for tf in ("1h", "4h", "1d"):
+                try:
+                    tf_data[tf] = exchange.get_ohlcv(sym, tf, limit=100)
+                except Exception:
+                    pass
+
+            snapshots = {}
+            for tf, ohlcv in tf_data.items():
+                try:
+                    from bot.technical import calculate as calc
+                    snapshots[tf] = calc(ohlcv_to_df(ohlcv))
+                except Exception:
+                    pass
+
+            if not snapshots:
+                continue
+
+            try:
+                ticker = exchange.get_ticker(sym)
+                price = ticker.get("last")
+            except Exception:
+                price = None
+
+            news = get_news(sym, limit=5)
+            sentiment = get_aggregate_sentiment(news)
+
+            result = analyse(sym, price, snapshots, news, sentiment, {}, agent=agent)
+
+            for pred in result.predictions:
+                if pred.timeframe in results_by_tf:
+                    results_by_tf[pred.timeframe].append(
+                        {
+                            "symbol": sym,
+                            "direction": pred.direction,
+                            "confidence": pred.confidence,
+                            "reasoning": pred.reasoning,
+                            "price": price,
+                        }
+                    )
+        except Exception as exc:
+            logger.warning("Recommendation analysis failed for %s: %s", sym, exc)
+
+    # Sort each timeframe by confidence descending, keep top 3 bullish picks
+    recommendations: dict[str, list] = {}
+    for tf, entries in results_by_tf.items():
+        bullish = sorted(
+            [e for e in entries if e["direction"] == "bullish"],
+            key=lambda x: x["confidence"],
+            reverse=True,
+        )
+        recommendations[tf] = bullish[:3]
+
+    return jsonify(
+        {
+            "agent": agent,
+            "symbols_scanned": symbols,
+            "recommendations": recommendations,
+        }
+    )
 
 
 @app.route("/api/bot/start", methods=["POST"])
