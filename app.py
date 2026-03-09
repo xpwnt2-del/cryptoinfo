@@ -53,6 +53,12 @@ _TF_INTERVAL_SECONDS = {
 }
 
 
+def _opt_str(value) -> Optional[str]:
+    """Convert a value to str or None; empty strings become None."""
+    s = str(value or "").strip()
+    return s if s else None
+
+
 def _floor_ts(ts_seconds: float, timeframe: str) -> int:
     interval = _TF_INTERVAL_SECONDS.get(timeframe, 3600)
     return int(floor(ts_seconds / interval) * interval)
@@ -168,8 +174,16 @@ def _bot_tick(symbol: str) -> None:
         # "short" → only sell (go short/close)
         # "both"  → trade in either direction
         if direction_filter == "long" and side != "buy":
+            logger.info(
+                "Bot skipping %s signal for %s (direction_filter=%s)",
+                side, symbol, direction_filter,
+            )
             return
         if direction_filter == "short" and side != "sell":
+            logger.info(
+                "Bot skipping %s signal for %s (direction_filter=%s)",
+                side, symbol, direction_filter,
+            )
             return
 
         trade_amount = Config.BOT_TRADE_AMOUNT
@@ -416,6 +430,118 @@ def get_balance():
         return jsonify({"error": str(exc), "balances": {}}), 200
     except Exception as exc:
         return jsonify({"error": str(exc), "balances": {}}), 502
+
+
+@app.route("/api/wallet")
+def get_wallet():
+    """Return combined wallet view: exchange balances + deposit-based holdings.
+
+    Exchange balances are fetched when API keys are configured; otherwise an
+    empty dict is returned.  Deposit totals are always available (local DB).
+
+    Response shape::
+
+        {
+          "exchange_balances": {"BTC": 0.5, "USDT": 1200.0, ...},
+          "deposit_totals":    {"BTC": 1.0, "ETH": 2.5, ...},
+          "prices":            {"BTC": 67000.0, "ETH": 3500.0, ...},
+          "total_usd":         <estimated total portfolio value>,
+          "exchange_error":    null | "<error message>",
+        }
+    """
+    # Exchange balances (requires API keys)
+    exchange_balances: dict[str, float] = {}
+    exchange_error: Optional[str] = None
+    try:
+        raw = exchange.get_balance()
+        exchange_balances = {
+            asset: float(amt)
+            for asset, amt in raw.get("total", {}).items()
+            if float(amt or 0) > 0
+        }
+    except PermissionError as exc:
+        exchange_error = str(exc)
+    except Exception as exc:
+        exchange_error = str(exc)
+
+    # Deposit totals from local database
+    deposits = db.get_deposits()
+    deposit_totals: dict[str, float] = {}
+    for dep in deposits:
+        asset = dep["asset"]
+        deposit_totals[asset] = deposit_totals.get(asset, 0.0) + dep["amount"]
+
+    # Collect all unique non-USDT assets to price
+    all_assets = set(exchange_balances) | set(deposit_totals)
+    prices: dict[str, float] = {}
+    for asset in all_assets:
+        if asset == "USDT":
+            prices[asset] = 1.0
+            continue
+        try:
+            ticker = exchange.get_ticker(asset)
+            p = ticker.get("last")
+            if p:
+                prices[asset] = float(p)
+        except Exception:
+            pass  # price unavailable – skip
+
+    # Estimate total USD value.
+    # Prefer live exchange balances when available (exchange_error is None);
+    # fall back to locally-tracked deposit totals so the total is always shown.
+    holdings = exchange_balances if exchange_error is None and exchange_balances else deposit_totals
+    total_usd = sum(
+        amount * prices.get(asset, 0.0)
+        for asset, amount in holdings.items()
+    )
+
+    return jsonify(
+        {
+            "exchange_balances": exchange_balances,
+            "deposit_totals": deposit_totals,
+            "prices": prices,
+            "total_usd": total_usd,
+            "exchange_error": exchange_error,
+        }
+    )
+
+
+@app.route("/api/wallet/deposits", methods=["GET"])
+def list_deposits():
+    asset = request.args.get("asset")
+    if asset:
+        asset = normalise_symbol(asset)
+    return jsonify(db.get_deposits(asset))
+
+
+@app.route("/api/wallet/deposits", methods=["POST"])
+def create_deposit():
+    data = request.get_json(force=True, silent=True) or {}
+    required = ("asset", "amount")
+    missing = [f for f in required if not data.get(f)]
+    if missing:
+        return jsonify({"error": f"Missing fields: {', '.join(missing)}"}), 400
+
+    try:
+        dep = db.add_deposit(
+            asset=normalise_symbol(str(data["asset"])),
+            amount=float(data["amount"]),
+            network=_opt_str(data.get("network")),
+            tx_hash=_opt_str(data.get("tx_hash")),
+            note=_opt_str(data.get("note")),
+        )
+    except (ValueError, TypeError) as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    return jsonify(dep), 201
+
+
+@app.route("/api/wallet/deposits/<int:dep_id>", methods=["DELETE"])
+def delete_deposit(dep_id: int):
+    deleted = db.delete_deposit(dep_id)
+    if not deleted:
+        return jsonify({"error": "Deposit not found"}), 404
+    return jsonify({"deleted": dep_id})
 
 
 @app.route("/api/sell-all", methods=["POST"])

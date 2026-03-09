@@ -16,6 +16,7 @@
     <span id="dry-run-badge" class="badge badge-info" style="display:none">DRY RUN</span>
   </div>
   <div class="header-right">
+    <button class="btn btn-secondary" onclick="toggleWallet()">💼 Wallet</button>
     <button id="btn-stop-bot" class="btn btn-danger" onclick="stopBot()">⏹ Stop Bot</button>
     <button id="btn-sell-all" class="btn btn-warning" onclick="confirmSellAll()">💵 Sell All → USDT</button>
   </div>
@@ -110,6 +111,42 @@
   </div>
 </section>
 
+<!-- ═══════════════════════════ WALLET ════════════════════════════════════════ -->
+<section id="wallet-section" class="section" style="display:none">
+  <div class="card">
+    <h3>💼 Wallet
+      <button class="btn btn-secondary btn-sm" onclick="loadWallet()" style="margin-left:8px" title="Refresh balances">↺ Refresh</button>
+      <button class="btn btn-primary btn-sm"   onclick="openDepositModal()" style="margin-left:4px">⬇ Record Deposit</button>
+    </h3>
+
+    <!-- Balances table -->
+    <div id="wallet-error" class="wallet-notice" style="display:none"></div>
+    <table class="wallet-table" id="wallet-table">
+      <thead>
+        <tr>
+          <th>Asset</th>
+          <th class="num">Exchange Balance</th>
+          <th class="num">Deposited</th>
+          <th class="num">Price (USDT)</th>
+          <th class="num">Est. Value (USDT)</th>
+        </tr>
+      </thead>
+      <tbody id="wallet-tbody">
+        <tr><td colspan="5" class="wallet-empty">Loading…</td></tr>
+      </tbody>
+    </table>
+    <div id="wallet-total" class="wallet-total"></div>
+  </div>
+
+  <!-- Deposit history -->
+  <div class="card" style="margin-top:16px">
+    <h3>📥 Deposit History</h3>
+    <div id="deposit-list" class="deposit-list">
+      <p class="tx-empty">No deposits recorded yet.</p>
+    </div>
+  </div>
+</section>
+
 <!-- ═══════════════════════════ BOTTOM GRID ══════════════════════════════════ -->
 <section id="bottom-section" class="section" style="display:none">
   <div class="grid-2">
@@ -161,15 +198,58 @@
     <h3>🤖 Bot Controls</h3>
     <div class="bot-controls">
       <div>
-        <label>Symbol to monitor</label>
-        <input id="bot-symbol-input" type="text" placeholder="BTC" value="BTC" style="width:100px" />
+        <label>Symbol</label>
+        <input id="bot-symbol-input" type="text" placeholder="BTC" value="BTC" style="width:90px" />
+      </div>
+      <div>
+        <label>Direction</label>
+        <select id="bot-direction-input" style="width:100px">
+          <option value="both">Both</option>
+          <option value="long">Long only</option>
+          <option value="short">Short only</option>
+        </select>
       </div>
       <button class="btn btn-success" onclick="startBot()">▶ Start Bot</button>
-      <button class="btn btn-danger" onclick="stopBot()">⏹ Stop Bot</button>
+      <button class="btn btn-danger"  onclick="stopBot()">⏹ Stop Bot</button>
     </div>
     <div id="bot-status-panel" class="bot-status-panel"></div>
   </div>
 </section>
+
+<!-- ═══════════════════════════ DEPOSIT MODAL ════════════════════════════════ -->
+<div id="deposit-modal" class="modal-backdrop" style="display:none" onclick="closeDepositModal()">
+  <div class="modal" onclick="event.stopPropagation()">
+    <h2>⬇ Record Deposit</h2>
+    <p>Log a deposit into your wallet for tracking purposes.</p>
+    <form id="deposit-form" onsubmit="submitDeposit(event)">
+      <div class="form-row">
+        <label>Asset *</label>
+        <input id="dep-asset"   type="text"   placeholder="BTC"          required autocomplete="off" />
+      </div>
+      <div class="form-row">
+        <label>Amount *</label>
+        <input id="dep-amount"  type="number" placeholder="0.5" step="any" min="0" required />
+      </div>
+      <div class="form-row">
+        <label>Network (optional)</label>
+        <input id="dep-network" type="text"   placeholder="BTC, ERC-20, TRC-20…" />
+      </div>
+      <div class="form-row">
+        <label>TX Hash (optional)</label>
+        <input id="dep-txhash"  type="text"   placeholder="0x…" />
+      </div>
+      <div class="form-row">
+        <label>Note (optional)</label>
+        <input id="dep-note"    type="text"   placeholder="e.g. Transfer from Coinbase" />
+      </div>
+      <div id="dep-result" class="tx-result" style="display:none"></div>
+      <div class="modal-buttons">
+        <button type="submit" class="btn btn-primary">Save Deposit</button>
+        <button type="button" class="btn btn-secondary" onclick="closeDepositModal()">Cancel</button>
+      </div>
+    </form>
+  </div>
+</div>
 
 <!-- ═══════════════════════════ SELL-ALL MODAL ═══════════════════════════════ -->
 <div id="sell-modal" class="modal-backdrop" style="display:none" onclick="closeSellModal()">

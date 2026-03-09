@@ -432,3 +432,135 @@ body {
 
 /* ── Bottom padding ──────────────────────────────────────────────────────── */
 body::after { content: ''; display: block; height: 40px; }
+
+/* ── Small button variant ────────────────────────────────────────────────── */
+.btn-sm { padding: 3px 10px; font-size: .75rem; }
+
+/* ── Drawing toolbar ─────────────────────────────────────────────────────── */
+.draw-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.draw-toolbar-label { font-size: .78rem; color: var(--text-dim); }
+.draw-btn {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: .78rem;
+  font-weight: 600;
+  transition: all .15s;
+}
+.draw-btn:hover  { border-color: var(--blue); color: var(--blue); }
+.draw-btn.active { background: #1c2d45; color: var(--blue); border-color: var(--blue); }
+.draw-btn-danger { color: var(--red-dim); border-color: var(--red-dim); }
+.draw-btn-danger:hover { background: #2d1b1b; color: var(--red); border-color: var(--red); }
+
+.draw-hint {
+  font-size: .76rem;
+  color: var(--orange);
+  padding: 4px 8px;
+  background: #2d240e;
+  border-radius: 4px;
+  margin-bottom: 6px;
+}
+
+/* ── News latest highlight ────────────────────────────────────────────────── */
+.news-latest {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--blue);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  font-size: .83rem;
+}
+.news-latest .news-latest-label {
+  font-size: .68rem;
+  font-weight: 700;
+  color: var(--blue);
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  margin-bottom: 4px;
+}
+
+/* ── Wallet ───────────────────────────────────────────────────────────────── */
+.wallet-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: .83rem;
+  margin-bottom: 8px;
+}
+.wallet-table th {
+  text-align: left;
+  color: var(--text-dim);
+  font-weight: 600;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  font-size: .76rem;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+}
+.wallet-table th.num,
+.wallet-table td.num { text-align: right; }
+
+.wallet-table td {
+  padding: 8px 8px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+}
+.wallet-table tr:last-child td { border-bottom: none; }
+.wallet-table tr:hover td { background: var(--bg3); }
+
+.wallet-asset { font-weight: 700; color: var(--blue); }
+.wallet-empty { text-align: center; color: var(--text-dim); padding: 20px; }
+
+.wallet-total {
+  text-align: right;
+  font-size: .85rem;
+  font-weight: 700;
+  color: var(--green);
+  padding: 6px 8px 0;
+}
+
+.wallet-notice {
+  background: #2d1b1b;
+  color: var(--red);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: .8rem;
+  margin-bottom: 12px;
+}
+
+/* ── Deposit history ─────────────────────────────────────────────────────── */
+.deposit-list { max-height: 300px; overflow-y: auto; }
+.deposit-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: .8rem;
+  flex-wrap: wrap;
+}
+.deposit-item:last-child { border-bottom: none; }
+.dep-asset  { font-weight: 700; color: var(--green); min-width: 48px; }
+.dep-amt    { color: var(--text); min-width: 100px; }
+.dep-net    { color: var(--text-dim); font-size: .72rem; }
+.dep-hash   { color: var(--text-dim); font-size: .72rem; font-family: monospace;
+              max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dep-del {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: .85rem;
+  padding: 0 4px;
+}
+.dep-del:hover { color: var(--red); }
