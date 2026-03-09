@@ -64,6 +64,13 @@ class AnalysisResult:
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
+_DIRECTION_MULTIPLIER = {"bullish": 1, "bearish": -1, "neutral": 0}
+
+
+def _direction_multiplier(direction: str) -> int:
+    """Return +1 for bullish, -1 for bearish, 0 for neutral."""
+    return _DIRECTION_MULTIPLIER.get(direction, 0)
+
 def _direction_from_score(score: int) -> str:
     if score >= _WEAK_BULL:
         return "bullish"
@@ -278,7 +285,7 @@ def _rule_based_result(
     ]
 
     scores = [
-        p.confidence * (1 if p.direction == "bullish" else -1 if p.direction == "bearish" else 0)
+        p.confidence * _direction_multiplier(p.direction)
         for p in predictions
     ]
     avg_score = sum(scores) / len(scores) if scores else 0

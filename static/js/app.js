@@ -773,7 +773,7 @@ function renderAnalysis(data) {
   // Show side-by-side comparison panel when agent='both'
   if (agent === 'both' && (data.openai_predictions?.length || data.rule_based_predictions?.length)) {
     bothPanel.style.display = '';
-    predList.parentElement && (predList.style.display = 'none');
+    if (predList.parentElement) predList.style.display = 'none';
     _renderPredictionList(
       document.getElementById('openai-predictions-list'),
       data.openai_predictions || []

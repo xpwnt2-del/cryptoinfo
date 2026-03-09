@@ -45,6 +45,9 @@ _bot_lock = threading.Lock()
 # Multi-bot state: keyed by normalised symbol
 _bot_states: dict[str, dict] = {}
 
+# Maximum number of symbols to scan in /api/ai/recommend
+_MAX_RECOMMENDATION_SYMBOLS = 10
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 _TF_INTERVAL_SECONDS = {
@@ -598,7 +601,7 @@ def ai_recommend():
     raw_symbols = request.args.get(
         "symbols", "BTC,ETH,SOL,BNB,XRP,ADA,AVAX,DOGE,DOT,MATIC"
     )
-    symbols = [normalise_symbol(s.strip()) for s in raw_symbols.split(",") if s.strip()][:10]
+    symbols = [normalise_symbol(s.strip()) for s in raw_symbols.split(",") if s.strip()][:_MAX_RECOMMENDATION_SYMBOLS]
 
     results_by_tf: dict[str, list] = {"1h": [], "1d": [], "1w": []}
 
