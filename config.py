@@ -18,6 +18,7 @@ class Config:
     EXCHANGE_ID: str = os.getenv("EXCHANGE_ID", "binance")
     EXCHANGE_API_KEY: str = os.getenv("EXCHANGE_API_KEY", "")
     EXCHANGE_SECRET: str = os.getenv("EXCHANGE_SECRET", "")
+    EXCHANGE_PASSPHRASE: str = os.getenv("EXCHANGE_PASSPHRASE", "")
 
     # OpenAI
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")

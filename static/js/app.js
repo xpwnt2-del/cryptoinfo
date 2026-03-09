@@ -584,6 +584,7 @@ let chartInstance    = null;
 let botPollInterval  = null;
 let pricePollTimer   = null;   // live price refresh
 let walletVisible    = false;  // wallet toggle state
+let _autoBotStarted  = false;  // track whether we've auto-started the bot
 
 const PRICE_POLL_INTERVAL_MS = 30000;  // refresh live price every 30 s
 
@@ -1308,7 +1309,18 @@ async function loadAIRecommendations() {
       agentBadgeEl.style.display = '';
     }
 
-    renderAIRecommendations(data.recommendations || {});
+    const recs = data.recommendations || {};
+    renderAIRecommendations(recs);
+
+    // Auto-start bot on the top pick (highest confidence across all timeframes)
+    // Only do this once per page load so manual refreshes don't restart the bot
+    if (!_autoBotStarted) {
+      const topPick = _findTopPick(recs);
+      if (topPick) {
+        _autoBotStarted = true;
+        await _autoStartBotForPick(topPick);
+      }
+    }
   } catch (err) {
     ['rec-1h', 'rec-1d', 'rec-1w'].forEach(id => {
       const el = document.getElementById(id);
@@ -1317,6 +1329,58 @@ async function loadAIRecommendations() {
   } finally {
     if (loadingEl) loadingEl.style.display = 'none';
     if (gridEl) gridEl.style.opacity = '1';
+  }
+}
+
+/**
+ * Find the single highest-confidence bullish pick across all timeframes.
+ * @param {Object} recs - recommendations object keyed by timeframe
+ * @returns {{ symbol, confidence, timeframe } | null}
+ */
+function _findTopPick(recs) {
+  let best = null;
+  for (const [tf, picks] of Object.entries(recs)) {
+    if (!Array.isArray(picks) || !picks.length) continue;
+    const top = picks[0]; // already sorted by confidence desc
+    if (!best || top.confidence > best.confidence) {
+      best = { ...top, timeframe: tf };
+    }
+  }
+  return best;
+}
+
+/**
+ * Auto-start the trading bot for a recommended pick and show a notice.
+ */
+async function _autoStartBotForPick(pick) {
+  const noticeEl = document.getElementById('rec-auto-bot-notice');
+  try {
+    const res  = await fetch('/api/bot/start', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ symbol: pick.symbol, direction: 'both' }),
+    });
+    const data = await res.json();
+    // 409 means bot already running – treat that as success
+    if (!res.ok && res.status !== 409) throw new Error(data.error);
+
+    // Update the symbol input so the UI reflects the auto-started bot
+    const symInput = document.getElementById('bot-symbol-input');
+    if (symInput) symInput.value = pick.symbol;
+
+    if (noticeEl) {
+      noticeEl.textContent = `🤖 Bot auto-started on top pick: ${pick.symbol} (${pick.confidence}% confidence, ${pick.timeframe} timeframe)`;
+      noticeEl.style.display = '';
+    }
+    pollBotStatus();
+  } catch (err) {
+    if (noticeEl) {
+      noticeEl.textContent = `⚠ Could not auto-start bot for ${pick.symbol}: ${err.message}. Please start the bot manually using the Bot Controls panel below.`;
+      noticeEl.style.display = '';
+      noticeEl.style.borderColor = 'var(--red)';
+      noticeEl.style.color = 'var(--red)';
+      noticeEl.style.background = 'rgba(239,83,80,.1)';
+    }
   }
 }
 

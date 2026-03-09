@@ -1,0 +1,34 @@
+# ── Cloudflare Pages + Workers deployment ─────────────────────────────────
+#
+# This project uses a static frontend (HTML/CSS/JS in static/ and templates/)
+# and a Python Flask backend.  Because Cloudflare Workers do not natively run
+# Python, the recommended deployment pattern is:
+#
+#   1. Deploy the Flask backend on any container host
+#      (Cloudflare Containers, Render, Railway, Fly.io, etc.)
+#   2. Optionally serve the static assets via Cloudflare Pages for CDN caching.
+#   3. Use Cloudflare Tunnel (cloudflared) to expose a local or self-hosted
+#      instance securely without opening firewall ports.
+#
+# ── Cloudflare Pages static-asset project ──────────────────────────────────
+name = "cryptoinfo"
+compatibility_date = "2024-01-01"
+pages_build_output_dir = "static"
+
+# ── Environment variables (set these in the Cloudflare dashboard) ──────────
+# Do NOT commit real secrets here – use the Cloudflare Pages "Variables &
+# Secrets" panel instead.
+[vars]
+FLASK_ENV = "production"
+
+# ── Cloudflare Tunnel helper ───────────────────────────────────────────────
+# Run the following commands after installing cloudflared:
+#
+#   cloudflared tunnel login
+#   cloudflared tunnel create cryptoinfo
+#   cloudflared tunnel route dns cryptoinfo <your-subdomain>.example.com
+#   cloudflared tunnel run --url http://localhost:8080 cryptoinfo
+#
+# Or start everything in one step (no configuration file needed):
+#   cloudflared tunnel --url http://localhost:8080
+# ────────────────────────────────────────────────────────────────────────────

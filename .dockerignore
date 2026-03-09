@@ -1,0 +1,11 @@
+.git
+.gitignore
+*.pyc
+__pycache__
+*.egg-info
+.env
+*.db
+*.sqlite3
+tests/
+.pytest_cache
+node_modules/

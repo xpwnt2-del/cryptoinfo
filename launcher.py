@@ -283,11 +283,22 @@ class LauncherApp:
         ttk.Entry(ef, textvariable=self._api_secret_var, show="•", width=42).grid(
             row=2, column=1, sticky="ew", padx=8, pady=3)
 
+        ttk.Label(ef, text="Passphrase:").grid(row=3, column=0, sticky="w", pady=3)
+        self._api_passphrase_var = tk.StringVar()
+        ttk.Entry(ef, textvariable=self._api_passphrase_var, show="•", width=42).grid(
+            row=3, column=1, sticky="ew", padx=8, pady=3)
+
+        tk.Label(
+            ef,
+            text="Passphrase required by OKX and Coinbase Advanced Trade. Leave blank for other exchanges.",
+            bg=self._BG, fg=self._BORDER, font=("Helvetica", 9),
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(0, 2))
+
         tk.Label(
             ef,
             text="Leave API Key/Secret empty to use read-only mode (no trading).",
             bg=self._BG, fg=self._BORDER, font=("Helvetica", 9),
-        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(0, 2))
+        ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(0, 2))
 
         # OpenAI section
         af = ttk.LabelFrame(
@@ -380,6 +391,7 @@ class LauncherApp:
 
         self._api_key_var.set(_clean(e.get("EXCHANGE_API_KEY", ""), _PLACEHOLDER_PREFIX))
         self._api_secret_var.set(_clean(e.get("EXCHANGE_SECRET", ""), _PLACEHOLDER_PREFIX))
+        self._api_passphrase_var.set(_clean(e.get("EXCHANGE_PASSPHRASE", ""), _PLACEHOLDER_PREFIX))
         self._openai_key_var.set(_clean(e.get("OPENAI_API_KEY", ""), _PLACEHOLDER_PREFIX))
 
         model = e.get("OPENAI_MODEL", "gpt-4o-mini")
@@ -398,6 +410,7 @@ class LauncherApp:
             "EXCHANGE_ID":      self._exchange_var.get()       or "binance",
             "EXCHANGE_API_KEY": self._api_key_var.get()        or "your_api_key_here",
             "EXCHANGE_SECRET":  self._api_secret_var.get()     or "your_api_secret_here",
+            "EXCHANGE_PASSPHRASE": self._api_passphrase_var.get() or "your_passphrase_here",
             "OPENAI_API_KEY":   self._openai_key_var.get()     or "your_openai_key_here",
             "OPENAI_MODEL":     self._openai_model_var.get()   or "gpt-4o-mini",
             "DRY_RUN":          "false" if not self._dry_run_var.get() else "true",
