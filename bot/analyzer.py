@@ -3,6 +3,12 @@ bot/analyzer.py – Multi-timeframe AI analysis engine.
 
 Primary path  : OpenAI GPT (if OPENAI_API_KEY is configured).
 Fallback path : Deterministic rule-based scoring from technicals + news.
+
+Agent modes:
+  'auto'       – OpenAI if API key set, else rule-based (original behaviour)
+  'openai'     – Force OpenAI (errors if key missing)
+  'rule-based' – Always use rule-based scoring
+  'both'       – Run both and include combined results
 """
 
 from __future__ import annotations
@@ -19,6 +25,9 @@ logger = logging.getLogger(__name__)
 # Timeframes analysed, ordered short → long
 TIMEFRAMES = ("1h", "4h", "1d", "1w")
 
+# Valid agent identifiers
+AGENTS = ("auto", "openai", "rule-based", "both")
+
 # Score thresholds
 _STRONG_BULL = 40
 _STRONG_BEAR = -40
@@ -32,6 +41,7 @@ class TimeframePrediction:
     direction: str  # 'bullish' | 'bearish' | 'neutral'
     confidence: int  # 0–100
     reasoning: str
+    source: str = "rule-based"  # 'openai' | 'rule-based' | 'combined'
 
 
 @dataclass
@@ -45,7 +55,11 @@ class AnalysisResult:
     news_score: float = 0.0
     technical_score: int = 0
     ai_powered: bool = False
+    agent: str = "rule-based"  # which agent produced this result
     summary: str = ""
+    # When agent='both', these hold each engine's individual predictions
+    openai_predictions: list[TimeframePrediction] = field(default_factory=list)
+    rule_based_predictions: list[TimeframePrediction] = field(default_factory=list)
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -106,6 +120,7 @@ def _rule_based_prediction(
         direction=direction,
         confidence=confidence,
         reasoning=reasoning,
+        source="rule-based",
     )
 
 
@@ -172,6 +187,7 @@ def _parse_openai_response(data: dict, symbol: str, price: Optional[float]) -> A
             direction=p.get("direction", "neutral"),
             confidence=int(p.get("confidence", 50)),
             reasoning=p.get("reasoning", ""),
+            source="openai",
         )
         for p in parsed.get("predictions", [])
     ]
@@ -196,12 +212,16 @@ def analyse(
     news_items: list[dict],
     news_sentiment: dict,
     metadata: dict,
+    agent: str = "auto",
 ) -> AnalysisResult:
     """
     Return a full :class:`AnalysisResult` for *symbol*.
 
-    Tries OpenAI first; falls back to rule-based scoring if the API
-    key is missing or the call fails.
+    *agent* controls which analysis engine is used:
+      - ``'auto'``       – OpenAI if API key is set, else rule-based (default)
+      - ``'openai'``     – Force OpenAI GPT analysis
+      - ``'rule-based'`` – Always use rule-based scoring
+      - ``'both'``       – Run both engines and return combined/compared result
     """
     news_score = float(news_sentiment.get("score", 0))
 
@@ -209,24 +229,58 @@ def analyse(
     ref_snap = snapshots.get("1h") or next(iter(snapshots.values()), IndicatorSnapshot())
     tech_score = ref_snap.score
 
+    # Normalise unknown agent values to 'auto'
+    if agent not in AGENTS:
+        agent = "auto"
+
+    if agent == "both":
+        return _analyse_both(symbol, price, snapshots, news_items, news_sentiment, metadata)
+
+    if agent == "rule-based":
+        return _rule_based_result(symbol, price, snapshots, news_items, news_sentiment, metadata)
+
+    # agent == 'openai' or 'auto'
     if Config.OPENAI_API_KEY:
         try:
             result = _call_openai(symbol, price, snapshots, news_items, metadata)
             result.news_sentiment = news_sentiment.get("label", "neutral")
             result.news_score = news_score
             result.technical_score = tech_score
+            result.agent = "openai"
             return result
         except Exception as exc:
+            if agent == "openai":
+                logger.warning("OpenAI call failed: %s", exc)
+                raise
             logger.warning("OpenAI call failed, using rule-based fallback: %s", exc)
+    elif agent == "openai":
+        raise ValueError("OPENAI_API_KEY is not configured")
 
-    # Rule-based fallback
+    return _rule_based_result(symbol, price, snapshots, news_items, news_sentiment, metadata)
+
+
+def _rule_based_result(
+    symbol: str,
+    price: Optional[float],
+    snapshots: dict[str, IndicatorSnapshot],
+    news_items: list[dict],
+    news_sentiment: dict,
+    metadata: dict,
+) -> AnalysisResult:
+    """Build a full AnalysisResult using the rule-based engine only."""
+    news_score = float(news_sentiment.get("score", 0))
+    ref_snap = snapshots.get("1h") or next(iter(snapshots.values()), IndicatorSnapshot())
+    tech_score = ref_snap.score
+
     predictions = [
         _rule_based_prediction(tf, snapshots.get(tf, IndicatorSnapshot()), news_score)
         for tf in TIMEFRAMES
     ]
 
-    scores = [p.confidence * (1 if p.direction == "bullish" else -1 if p.direction == "bearish" else 0)
-              for p in predictions]
+    scores = [
+        p.confidence * (1 if p.direction == "bullish" else -1 if p.direction == "bearish" else 0)
+        for p in predictions
+    ]
     avg_score = sum(scores) / len(scores) if scores else 0
     overall_dir = _direction_from_score(int(avg_score))
     overall_conf = _confidence_from_score(int(abs(avg_score)))
@@ -253,8 +307,118 @@ def analyse(
         news_score=news_score,
         technical_score=tech_score,
         ai_powered=False,
+        agent="rule-based",
         summary=" ".join(summaries),
+        rule_based_predictions=predictions,
     )
+
+
+def _analyse_both(
+    symbol: str,
+    price: Optional[float],
+    snapshots: dict[str, IndicatorSnapshot],
+    news_items: list[dict],
+    news_sentiment: dict,
+    metadata: dict,
+) -> AnalysisResult:
+    """
+    Run both OpenAI and rule-based engines, return a combined result.
+    If OpenAI is unavailable the result gracefully degrades to rule-based only.
+    """
+    news_score = float(news_sentiment.get("score", 0))
+    ref_snap = snapshots.get("1h") or next(iter(snapshots.values()), IndicatorSnapshot())
+    tech_score = ref_snap.score
+
+    # Rule-based is always available
+    rb_result = _rule_based_result(symbol, price, snapshots, news_items, news_sentiment, metadata)
+
+    openai_result: Optional[AnalysisResult] = None
+    if Config.OPENAI_API_KEY:
+        try:
+            openai_result = _call_openai(symbol, price, snapshots, news_items, metadata)
+            openai_result.news_sentiment = news_sentiment.get("label", "neutral")
+            openai_result.news_score = news_score
+            openai_result.technical_score = tech_score
+            openai_result.agent = "openai"
+            # Tag predictions with source
+            for p in openai_result.predictions:
+                p.source = "openai"
+        except Exception as exc:
+            logger.warning("OpenAI call failed in 'both' mode, using rule-based only: %s", exc)
+
+    if openai_result is None:
+        # Only rule-based available
+        rb_result.agent = "rule-based"
+        return rb_result
+
+    # Combine predictions: average confidence, keep the direction with higher average
+    combined_predictions = _combine_predictions(
+        openai_result.predictions, rb_result.predictions
+    )
+
+    # Combined overall: average confidence between the two engines
+    combined_conf = (openai_result.overall_confidence + rb_result.overall_confidence) // 2
+    # Direction: prefer agreement; fall back to higher-confidence engine
+    if openai_result.overall_direction == rb_result.overall_direction:
+        combined_dir = openai_result.overall_direction
+    elif openai_result.overall_confidence >= rb_result.overall_confidence:
+        combined_dir = openai_result.overall_direction
+    else:
+        combined_dir = rb_result.overall_direction
+
+    summary = (
+        f"[ChatGPT] {openai_result.summary} "
+        f"[Rule-based] {rb_result.summary}"
+    )
+
+    return AnalysisResult(
+        symbol=symbol,
+        current_price=price,
+        predictions=combined_predictions,
+        overall_direction=combined_dir,
+        overall_confidence=combined_conf,
+        news_sentiment=news_sentiment.get("label", "neutral"),
+        news_score=news_score,
+        technical_score=tech_score,
+        ai_powered=True,
+        agent="both",
+        summary=summary,
+        openai_predictions=openai_result.predictions,
+        rule_based_predictions=rb_result.predictions,
+    )
+
+
+def _combine_predictions(
+    openai_preds: list[TimeframePrediction],
+    rb_preds: list[TimeframePrediction],
+) -> list[TimeframePrediction]:
+    """Merge two prediction lists by averaging confidence per timeframe."""
+    rb_by_tf = {p.timeframe: p for p in rb_preds}
+    combined = []
+    for gpt_pred in openai_preds:
+        rb_pred = rb_by_tf.get(gpt_pred.timeframe)
+        if rb_pred is None:
+            combined.append(gpt_pred)
+            continue
+        avg_conf = (gpt_pred.confidence + rb_pred.confidence) // 2
+        # Agree on direction or pick higher-confidence
+        if gpt_pred.direction == rb_pred.direction:
+            direction = gpt_pred.direction
+        elif gpt_pred.confidence >= rb_pred.confidence:
+            direction = gpt_pred.direction
+        else:
+            direction = rb_pred.direction
+        reasoning = f"ChatGPT: {gpt_pred.reasoning} | Rule-based: {rb_pred.reasoning}"
+        combined.append(
+            TimeframePrediction(
+                timeframe=gpt_pred.timeframe,
+                direction=direction,
+                confidence=avg_conf,
+                reasoning=reasoning,
+                source="combined",
+            )
+        )
+    return combined
 
 
 def _call_openai(

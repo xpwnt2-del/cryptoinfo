@@ -583,6 +583,7 @@ let currentTF        = '1h';
 let chartInstance    = null;
 let botPollInterval  = null;
 let pricePollTimer   = null;   // live price refresh
+let walletVisible    = false;  // wallet toggle state
 
 const PRICE_POLL_INTERVAL_MS = 30000;  // refresh live price every 30 s
 
@@ -660,8 +661,10 @@ async function doSearch() {
   errEl.style.display = 'none';
   document.getElementById('tx-symbol').value = raw;
 
+  const agent = document.getElementById('agent-select')?.value || 'auto';
+
   try {
-    const res = await fetch(`/api/search/${encodeURIComponent(raw)}`);
+    const res = await fetch(`/api/search/${encodeURIComponent(raw)}?agent=${encodeURIComponent(agent)}`);
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
     if (data.error) throw new Error(data.error);
@@ -748,32 +751,42 @@ function renderAnalysis(data) {
   const predList = document.getElementById('predictions-list');
   predList.innerHTML = '';
 
-  document.getElementById('ai-badge').style.display = data.ai_powered ? '' : 'none';
+  const aiBadge    = document.getElementById('ai-badge');
+  const agentBadge = document.getElementById('ai-agent-badge');
+  const bothPanel  = document.getElementById('both-predictions');
 
-  (data.predictions || []).forEach(p => {
-    const pct   = Math.min(100, Math.max(0, p.confidence));
-    const color = directionColor(p.direction);
-    const arrow = p.direction === 'bullish' ? '↑' : p.direction === 'bearish' ? '↓' : '→';
+  // Agent badge
+  const agent = data.agent || 'rule-based';
+  const agentLabels = {
+    'openai':     '💬 ChatGPT',
+    'rule-based': '📊 Rule-Based',
+    'both':       '✨ Both',
+    'auto':       '🤖 Auto',
+  };
+  agentBadge.textContent = agentLabels[agent] || agent;
+  agentBadge.className   = 'ai-agent-badge ai-agent-' + agent;
+  agentBadge.style.display = '';
 
-    const row = document.createElement('div');
-    row.className = 'prediction-row';
-    row.innerHTML = `
-      <span class="pred-tf">${p.timeframe}</span>
-      <span class="pred-arrow" style="color:${color}">${arrow}</span>
-      <div class="pred-bar-wrap">
-        <div class="pred-bar" style="width:${pct}%;background:${color}"></div>
-      </div>
-      <span class="pred-conf">${pct}%</span>
-    `;
-    predList.appendChild(row);
+  // Legacy GPT badge (shown when OpenAI is the active engine)
+  aiBadge.style.display = (data.ai_powered && agent !== 'both') ? '' : 'none';
 
-    if (p.reasoning) {
-      const r = document.createElement('div');
-      r.className = 'pred-reason';
-      r.textContent = p.reasoning;
-      predList.appendChild(r);
-    }
-  });
+  // Show side-by-side comparison panel when agent='both'
+  if (agent === 'both' && (data.openai_predictions?.length || data.rule_based_predictions?.length)) {
+    bothPanel.style.display = '';
+    predList.parentElement && (predList.style.display = 'none');
+    _renderPredictionList(
+      document.getElementById('openai-predictions-list'),
+      data.openai_predictions || []
+    );
+    _renderPredictionList(
+      document.getElementById('rulebased-predictions-list'),
+      data.rule_based_predictions || []
+    );
+  } else {
+    bothPanel.style.display = 'none';
+    predList.style.display  = '';
+    _renderPredictionList(predList, data.predictions || []);
+  }
 
   document.getElementById('ai-summary').textContent = data.summary || '';
 
@@ -812,6 +825,38 @@ function renderAnalysis(data) {
       <span class="ind-value ${sig ? signalClass(sig) : ''}">${value}</span>
     `;
     panel.appendChild(el);
+  });
+}
+
+function _renderPredictionList(container, predictions) {
+  container.innerHTML = '';
+  if (!predictions.length) {
+    container.innerHTML = '<p style="color:var(--text-dim);font-size:.8rem">No predictions available.</p>';
+    return;
+  }
+  predictions.forEach(p => {
+    const pct   = Math.min(100, Math.max(0, p.confidence));
+    const color = directionColor(p.direction);
+    const arrow = p.direction === 'bullish' ? '↑' : p.direction === 'bearish' ? '↓' : '→';
+
+    const row = document.createElement('div');
+    row.className = 'prediction-row';
+    row.innerHTML = `
+      <span class="pred-tf">${p.timeframe}</span>
+      <span class="pred-arrow" style="color:${color}">${arrow}</span>
+      <div class="pred-bar-wrap">
+        <div class="pred-bar" style="width:${pct}%;background:${color}"></div>
+      </div>
+      <span class="pred-conf">${pct}%</span>
+    `;
+    container.appendChild(row);
+
+    if (p.reasoning) {
+      const r = document.createElement('div');
+      r.className = 'pred-reason';
+      r.textContent = p.reasoning;
+      container.appendChild(r);
+    }
   });
 }
 
@@ -1233,14 +1278,103 @@ function clearDrawings() {
 
 
 /* ════════════════════════════════════════════════════════════════════════════
+   SECTION 11b – AI Crypto Recommendations
+   ════════════════════════════════════════════════════════════════════════════ */
+
+async function loadAIRecommendations() {
+  const loadingEl = document.getElementById('rec-loading');
+  const gridEl    = document.getElementById('rec-grid');
+  const agentBadgeEl = document.getElementById('rec-agent-badge');
+
+  if (loadingEl) loadingEl.style.display = '';
+  if (gridEl) gridEl.style.opacity = '0.4';
+
+  const agent = document.getElementById('agent-select')?.value || 'auto';
+
+  try {
+    const res  = await fetch(`/api/ai/recommend?agent=${encodeURIComponent(agent)}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Server error');
+
+    if (agentBadgeEl) {
+      const labels = {
+        'openai':     '💬 ChatGPT',
+        'rule-based': '📊 Rule-Based',
+        'both':       '✨ Both',
+        'auto':       '🤖 Auto',
+      };
+      agentBadgeEl.textContent = labels[data.agent] || data.agent;
+      agentBadgeEl.className   = 'ai-agent-badge ai-agent-' + (data.agent || 'auto');
+      agentBadgeEl.style.display = '';
+    }
+
+    renderAIRecommendations(data.recommendations || {});
+  } catch (err) {
+    ['rec-1h', 'rec-1d', 'rec-1w'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = `<p class="rec-empty" style="color:var(--red)">Failed: ${err.message}</p>`;
+    });
+  } finally {
+    if (loadingEl) loadingEl.style.display = 'none';
+    if (gridEl) gridEl.style.opacity = '1';
+  }
+}
+
+function renderAIRecommendations(recs) {
+  const tfMap = { '1h': 'rec-1h', '1d': 'rec-1d', '1w': 'rec-1w' };
+  Object.entries(tfMap).forEach(([tf, elId]) => {
+    const el    = document.getElementById(elId);
+    if (!el) return;
+    const picks = recs[tf] || [];
+    el.innerHTML = '';
+
+    if (!picks.length) {
+      el.innerHTML = '<p class="rec-empty">No bullish picks found.</p>';
+      return;
+    }
+
+    picks.forEach((pick, idx) => {
+      const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : '🥉';
+      const card  = document.createElement('div');
+      card.className = 'rec-pick';
+      const priceStr = pick.price ? fmtPrice(pick.price) : '—';
+      card.innerHTML = `
+        <div class="rec-pick-header">
+          <span class="rec-medal">${medal}</span>
+          <span class="rec-symbol" onclick="quickSearch('${pick.symbol}')">${pick.symbol}</span>
+          <span class="rec-price">${priceStr}</span>
+          <span class="rec-conf" style="color:var(--green)">${pick.confidence}%</span>
+        </div>
+        <div class="rec-reason">${pick.reasoning || ''}</div>
+      `;
+      el.appendChild(card);
+    });
+  });
+}
+
+function quickSearch(symbol) {
+  document.getElementById('search-input').value = symbol;
+  doSearch();
+}
+
+
+/* ════════════════════════════════════════════════════════════════════════════
    SECTION 12 – Wallet
    ════════════════════════════════════════════════════════════════════════════ */
 
 function toggleWallet() {
   const sec = document.getElementById('wallet-section');
-  const visible = sec.style.display !== 'none';
-  sec.style.display = visible ? 'none' : '';
-  if (!visible) loadWallet();
+  const btn = document.getElementById('btn-wallet');
+  walletVisible = !walletVisible;
+  sec.style.display = walletVisible ? 'block' : 'none';
+  if (btn) {
+    btn.textContent  = walletVisible ? '💼 Wallet ▲' : '💼 Wallet';
+    btn.classList.toggle('btn-wallet-active', walletVisible);
+  }
+  if (walletVisible) {
+    loadWallet();
+    sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
 }
 
 async function loadWallet() {
@@ -1412,4 +1546,6 @@ async function deleteDeposit(id) {
   // Start polling bot status
   fetchBotStatus();
   botPollInterval = setInterval(fetchBotStatus, 10000);
+  // Load AI recommendations on startup
+  loadAIRecommendations();
 })();

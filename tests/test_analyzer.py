@@ -3,6 +3,7 @@
 import pytest
 
 from bot.analyzer import (
+    AGENTS,
     TIMEFRAMES,
     AnalysisResult,
     TimeframePrediction,
@@ -161,3 +162,67 @@ class TestAnalyse:
         monkeypatch.setattr("bot.analyzer.Config.OPENAI_API_KEY", "")
         result = self._run()
         assert result.ai_powered is False
+
+
+# ── agent parameter ──────────────────────────────────────────────────────────
+
+class TestAnalyseAgent:
+    def _run(self, agent="auto", score=40, news_score=1.5):
+        snap = make_snap(score)
+        snapshots = {"1h": snap, "4h": snap}
+        news = [{"sentiment": "bullish", "sentiment_score": 2}]
+        sentiment = {"label": "bullish", "score": news_score}
+        return analyse("BTC", 50000.0, snapshots, news, sentiment, {}, agent=agent)
+
+    def test_rule_based_agent_returns_rule_based(self, monkeypatch):
+        monkeypatch.setattr("bot.analyzer.Config.OPENAI_API_KEY", "sk-fake")
+        result = self._run(agent="rule-based")
+        assert result.ai_powered is False
+        assert result.agent == "rule-based"
+
+    def test_rule_based_agent_has_rule_based_predictions(self, monkeypatch):
+        monkeypatch.setattr("bot.analyzer.Config.OPENAI_API_KEY", "sk-fake")
+        result = self._run(agent="rule-based")
+        for p in result.predictions:
+            assert p.source == "rule-based"
+
+    def test_auto_without_key_uses_rule_based(self, monkeypatch):
+        monkeypatch.setattr("bot.analyzer.Config.OPENAI_API_KEY", "")
+        result = self._run(agent="auto")
+        assert result.agent == "rule-based"
+        assert result.ai_powered is False
+
+    def test_unknown_agent_treated_as_auto(self, monkeypatch):
+        monkeypatch.setattr("bot.analyzer.Config.OPENAI_API_KEY", "")
+        result = self._run(agent="invalid-agent")
+        assert isinstance(result, AnalysisResult)
+
+    def test_both_without_openai_key_returns_rule_based(self, monkeypatch):
+        monkeypatch.setattr("bot.analyzer.Config.OPENAI_API_KEY", "")
+        result = self._run(agent="both")
+        # Gracefully degrades to rule-based
+        assert isinstance(result, AnalysisResult)
+        assert result.agent == "rule-based"
+        assert result.ai_powered is False
+
+    def test_both_without_openai_has_rule_based_predictions(self, monkeypatch):
+        monkeypatch.setattr("bot.analyzer.Config.OPENAI_API_KEY", "")
+        result = self._run(agent="both")
+        assert len(result.predictions) > 0
+
+    def test_agents_constant_contains_valid_values(self):
+        assert "auto" in AGENTS
+        assert "openai" in AGENTS
+        assert "rule-based" in AGENTS
+        assert "both" in AGENTS
+
+    def test_result_has_agent_field(self, monkeypatch):
+        monkeypatch.setattr("bot.analyzer.Config.OPENAI_API_KEY", "")
+        result = self._run(agent="rule-based")
+        assert hasattr(result, "agent")
+
+    def test_result_has_openai_and_rule_based_preds_fields(self, monkeypatch):
+        monkeypatch.setattr("bot.analyzer.Config.OPENAI_API_KEY", "")
+        result = self._run(agent="both")
+        assert hasattr(result, "openai_predictions")
+        assert hasattr(result, "rule_based_predictions")

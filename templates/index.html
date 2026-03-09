@@ -16,7 +16,7 @@
     <span id="dry-run-badge" class="badge badge-info" style="display:none">DRY RUN</span>
   </div>
   <div class="header-right">
-    <button class="btn btn-secondary" onclick="toggleWallet()">💼 Wallet</button>
+    <button id="btn-wallet" class="btn btn-secondary" onclick="toggleWallet()">💼 Wallet</button>
     <button id="btn-stop-bot" class="btn btn-danger" onclick="stopBot()">⏹ Stop Bot</button>
     <button id="btn-sell-all" class="btn btn-warning" onclick="confirmSellAll()">💵 Sell All → USDT</button>
   </div>
@@ -26,6 +26,12 @@
 <section class="search-section">
   <div class="search-bar">
     <input id="search-input" type="text" placeholder="Enter symbol (BTC, ETH, SOL…)" autocomplete="off" />
+    <select id="agent-select" class="agent-select" title="AI agent to use for analysis">
+      <option value="auto">🤖 Auto</option>
+      <option value="openai">💬 ChatGPT</option>
+      <option value="rule-based">📊 Rule-Based</option>
+      <option value="both">✨ Both</option>
+    </select>
     <button class="btn btn-primary" onclick="doSearch()">🔍 Analyse</button>
   </div>
   <div id="search-error" class="error-msg" style="display:none"></div>
@@ -85,8 +91,23 @@
 
     <!-- AI Predictions -->
     <div class="card">
-      <h3>🧠 AI Predictions <span id="ai-badge" class="ai-badge" style="display:none">GPT</span></h3>
+      <h3>🧠 AI Predictions
+        <span id="ai-badge" class="ai-badge" style="display:none">GPT</span>
+        <span id="ai-agent-badge" class="ai-agent-badge" style="display:none"></span>
+      </h3>
       <div id="predictions-list"></div>
+      <div id="both-predictions" style="display:none">
+        <div class="both-section">
+          <div class="both-col">
+            <div class="both-header">💬 ChatGPT</div>
+            <div id="openai-predictions-list"></div>
+          </div>
+          <div class="both-col">
+            <div class="both-header">📊 Rule-Based</div>
+            <div id="rulebased-predictions-list"></div>
+          </div>
+        </div>
+      </div>
       <p id="ai-summary" class="summary-text"></p>
     </div>
 
@@ -96,6 +117,32 @@
       <div id="indicators-panel"></div>
     </div>
 
+  </div>
+</section>
+
+<!-- ═══════════════════════════ AI RECOMMENDATIONS ═══════════════════════════ -->
+<section id="recommendations-section" class="section">
+  <div class="card">
+    <h3>🏆 AI Crypto Picks
+      <span id="rec-agent-badge" class="ai-agent-badge" style="display:none"></span>
+      <button class="btn btn-secondary btn-sm" onclick="loadAIRecommendations()" style="margin-left:auto;float:right" title="Refresh picks">↺ Refresh</button>
+    </h3>
+    <p class="rec-description">Top bullish crypto picks based on AI analysis across multiple timeframes.</p>
+    <div id="rec-loading" style="display:none"><span class="loading">Scanning market…</span></div>
+    <div class="rec-grid" id="rec-grid">
+      <div class="rec-col">
+        <div class="rec-tf-header">⏱ 1 Hour Picks</div>
+        <div id="rec-1h" class="rec-list"><p class="rec-empty">Click Refresh to load picks.</p></div>
+      </div>
+      <div class="rec-col">
+        <div class="rec-tf-header">📅 1 Day Picks</div>
+        <div id="rec-1d" class="rec-list"><p class="rec-empty">Click Refresh to load picks.</p></div>
+      </div>
+      <div class="rec-col">
+        <div class="rec-tf-header">📆 1 Week Picks</div>
+        <div id="rec-1w" class="rec-list"><p class="rec-empty">Click Refresh to load picks.</p></div>
+      </div>
+    </div>
   </div>
 </section>
 
