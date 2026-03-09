@@ -755,6 +755,12 @@ def bot_status():
         )
 
 
+@app.route("/health")
+def health():
+    """Liveness/readiness probe used by Docker HEALTHCHECK and Cloudflare."""
+    return jsonify({"status": "ok"}), 200
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":

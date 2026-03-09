@@ -1,34 +1,52 @@
-# ── Cloudflare Pages + Workers deployment ─────────────────────────────────
+# ── Cloudflare Containers + Pages deployment ──────────────────────────────────
 #
-# This project uses a static frontend (HTML/CSS/JS in static/ and templates/)
-# and a Python Flask backend.  Because Cloudflare Workers do not natively run
-# Python, the recommended deployment pattern is:
+# CryptoInfo uses a Python Flask backend that runs inside a Docker container.
+# Deployment options:
 #
-#   1. Deploy the Flask backend on any container host
-#      (Cloudflare Containers, Render, Railway, Fly.io, etc.)
-#   2. Optionally serve the static assets via Cloudflare Pages for CDN caching.
-#   3. Use Cloudflare Tunnel (cloudflared) to expose a local or self-hosted
-#      instance securely without opening firewall ports.
+#   Option A – Cloudflare Containers (recommended)
+#     1. Build & push the image:
+#          docker build -t cryptoinfo .
+#          wrangler containers push cryptoinfo
+#     2. Deploy the Worker + container binding:
+#          wrangler deploy
 #
-# ── Cloudflare Pages static-asset project ──────────────────────────────────
+#   Option B – Cloudflare Tunnel (self-hosted)
+#     1. Start the app locally:  docker run -p 8080:8080 --env-file .env cryptoinfo
+#     2. Expose it:              cloudflared tunnel --url http://localhost:8080
+#
+#   Option C – Cloudflare Pages (static assets only)
+#     The static/ folder is published to the CDN automatically on every push.
+#
+# ── Worker (entry-point for Cloudflare Containers) ────────────────────────────
 name = "cryptoinfo"
 compatibility_date = "2024-01-01"
+main = "worker.js"            # Thin Worker that proxies requests to the container
+
+# ── Container binding ─────────────────────────────────────────────────────────
+# Bind the Worker to a container class so incoming requests are forwarded to
+# the running Flask container.  The container image is built from the Dockerfile
+# in the project root.
+#
+# To find your Cloudflare Account ID:
+#   https://dash.cloudflare.com/ → select domain → Overview → API section
+# Replace <CLOUDFLARE_ACCOUNT_ID> below with your actual account ID, e.g.
+#   image = "registry.cloudflare.com/abc123def456/cryptoinfo:latest"
+#
+# Ref: https://developers.cloudflare.com/containers/
+[[containers]]
+class_name = "CryptoinfoApp"
+# Image is resolved at deploy time by `wrangler containers push`
+image = "registry.cloudflare.com/<CLOUDFLARE_ACCOUNT_ID>/cryptoinfo:latest"
+# Max number of container instances (scale to zero when idle)
+max_instances = 2
+
+# ── Cloudflare Pages static-asset project ─────────────────────────────────────
 pages_build_output_dir = "static"
 
 # ── Environment variables (set these in the Cloudflare dashboard) ──────────
-# Do NOT commit real secrets here – use the Cloudflare Pages "Variables &
-# Secrets" panel instead.
+# Do NOT commit real secrets here – use the Cloudflare Pages / Workers
+# "Variables & Secrets" panel or `wrangler secret put` instead.
 [vars]
 FLASK_ENV = "production"
+PORT = "8080"
 
-# ── Cloudflare Tunnel helper ───────────────────────────────────────────────
-# Run the following commands after installing cloudflared:
-#
-#   cloudflared tunnel login
-#   cloudflared tunnel create cryptoinfo
-#   cloudflared tunnel route dns cryptoinfo <your-subdomain>.example.com
-#   cloudflared tunnel run --url http://localhost:8080 cryptoinfo
-#
-# Or start everything in one step (no configuration file needed):
-#   cloudflared tunnel --url http://localhost:8080
-# ────────────────────────────────────────────────────────────────────────────

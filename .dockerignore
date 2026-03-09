@@ -9,3 +9,17 @@ __pycache__
 tests/
 .pytest_cache
 node_modules/
+# Local run scripts – not needed inside the container
+run.bat
+run.command
+run.sh
+launcher.py
+# Wrangler build artefacts (not the config file itself)
+.wrangler/
+# Documentation
+README.md
+# IDE / OS artefacts
+.DS_Store
+.vscode/
+.idea/
+
