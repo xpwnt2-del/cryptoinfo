@@ -22,6 +22,33 @@
   </div>
 </header>
 
+<!-- ═══════════════════════════ AI RECOMMENDATIONS (always visible, pinned top) ═══════════════════════════ -->
+<section id="recommendations-section" class="section rec-pinned-top">
+  <div class="card">
+    <h3>🏆 AI Crypto Picks
+      <span id="rec-agent-badge" class="ai-agent-badge" style="display:none"></span>
+      <button class="btn btn-secondary btn-sm" onclick="loadAIRecommendations()" style="margin-left:auto;float:right" title="Refresh picks">↺ Refresh</button>
+    </h3>
+    <p class="rec-description">Top bullish crypto picks based on AI analysis across multiple timeframes. The bot automatically starts on the #1 pick on page load.</p>
+    <div id="rec-loading" style="display:none"><span class="loading">Scanning market…</span></div>
+    <div class="rec-grid" id="rec-grid">
+      <div class="rec-col">
+        <div class="rec-tf-header">⏱ 1 Hour Picks</div>
+        <div id="rec-1h" class="rec-list"><p class="rec-empty">Loading…</p></div>
+      </div>
+      <div class="rec-col">
+        <div class="rec-tf-header">📅 1 Day Picks</div>
+        <div id="rec-1d" class="rec-list"><p class="rec-empty">Loading…</p></div>
+      </div>
+      <div class="rec-col">
+        <div class="rec-tf-header">📆 1 Week Picks</div>
+        <div id="rec-1w" class="rec-list"><p class="rec-empty">Loading…</p></div>
+      </div>
+    </div>
+    <div id="rec-auto-bot-notice" class="rec-auto-bot-notice" style="display:none"></div>
+  </div>
+</section>
+
 <!-- ═══════════════════════════ SEARCH ══════════════════════════════════════ -->
 <section class="search-section">
   <div class="search-bar">
@@ -117,32 +144,6 @@
       <div id="indicators-panel"></div>
     </div>
 
-  </div>
-</section>
-
-<!-- ═══════════════════════════ AI RECOMMENDATIONS ═══════════════════════════ -->
-<section id="recommendations-section" class="section">
-  <div class="card">
-    <h3>🏆 AI Crypto Picks
-      <span id="rec-agent-badge" class="ai-agent-badge" style="display:none"></span>
-      <button class="btn btn-secondary btn-sm" onclick="loadAIRecommendations()" style="margin-left:auto;float:right" title="Refresh picks">↺ Refresh</button>
-    </h3>
-    <p class="rec-description">Top bullish crypto picks based on AI analysis across multiple timeframes.</p>
-    <div id="rec-loading" style="display:none"><span class="loading">Scanning market…</span></div>
-    <div class="rec-grid" id="rec-grid">
-      <div class="rec-col">
-        <div class="rec-tf-header">⏱ 1 Hour Picks</div>
-        <div id="rec-1h" class="rec-list"><p class="rec-empty">Click Refresh to load picks.</p></div>
-      </div>
-      <div class="rec-col">
-        <div class="rec-tf-header">📅 1 Day Picks</div>
-        <div id="rec-1d" class="rec-list"><p class="rec-empty">Click Refresh to load picks.</p></div>
-      </div>
-      <div class="rec-col">
-        <div class="rec-tf-header">📆 1 Week Picks</div>
-        <div id="rec-1w" class="rec-list"><p class="rec-empty">Click Refresh to load picks.</p></div>
-      </div>
-    </div>
   </div>
 </section>
 

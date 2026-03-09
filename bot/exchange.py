@@ -60,6 +60,7 @@ class ExchangeManager:
             {
                 "apiKey": Config.EXCHANGE_API_KEY or None,
                 "secret": Config.EXCHANGE_SECRET or None,
+                "password": Config.EXCHANGE_PASSPHRASE or None,
                 "enableRateLimit": True,
                 "options": {"defaultType": "spot"},
             }

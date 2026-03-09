@@ -621,6 +621,21 @@ body::after { content: ''; display: block; height: 40px; }
 }
 
 /* ── AI Recommendations ──────────────────────────────────────────────────── */
+.rec-pinned-top {
+  order: -1;
+  position: relative;
+}
+
+.rec-auto-bot-notice {
+  margin-top: 10px;
+  padding: 8px 12px;
+  background: rgba(166,227,161,.12);
+  border: 1px solid var(--green);
+  border-radius: 6px;
+  font-size: .82rem;
+  color: var(--green);
+}
+
 .rec-description {
   font-size: .8rem;
   color: var(--text-dim);
