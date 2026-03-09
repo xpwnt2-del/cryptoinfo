@@ -91,7 +91,10 @@ Cloudflare will print a public `*.trycloudflare.com` URL.
 ### Option B – Container on Cloudflare / any cloud
 
 ```bash
-# Build the image
+# Navigate to the project directory first
+cd /path/to/cryptoinfo   # e.g. cd ~/cryptoinfo-main
+
+# Build the image (the trailing '.' is the build context – the current directory)
 docker build -t cryptoinfo .
 
 # Run with your .env file
