@@ -14,6 +14,7 @@ Requirements: Python 3.9+ with tkinter (included in standard distributions)
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -42,11 +43,13 @@ ENV_FILE: Path = HERE / ".env"
 ENV_EXAMPLE: Path = HERE / ".env.example"
 REQUIREMENTS: Path = HERE / "requirements.txt"
 APP_SCRIPT: Path = HERE / "app.py"
+WRANGLER_FILE: Path = HERE / "wrangler.toml"
 
 EXCHANGES = ["binance", "coinbase", "kraken", "bybit", "okx", "mexc"]
 OPENAI_MODELS = ["gpt-4o-mini", "gpt-4o", "gpt-4", "gpt-3.5-turbo"]
 
-# Prefix used in .env.example for keys that have not been set yet
+# Prefix for placeholder values in wrangler.toml that have not been set yet
+_WRANGLER_PLACEHOLDER_PREFIX = "<"
 _PLACEHOLDER_PREFIX = "your_"
 # Seconds to wait for Flask to bind the port before opening the browser
 _FLASK_STARTUP_DELAY = 2
@@ -96,6 +99,74 @@ def _write_env(values: dict) -> None:
     ENV_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+# ── wrangler.toml helpers ─────────────────────────────────────────────────────
+
+def _read_wrangler() -> dict:
+    """Return key deployment fields parsed from wrangler.toml."""
+    if not WRANGLER_FILE.exists():
+        return {}
+    text = WRANGLER_FILE.read_text(encoding="utf-8")
+    result: dict = {}
+
+    m = re.search(r'^name\s*=\s*"([^"]+)"', text, re.MULTILINE)
+    if m:
+        result["name"] = m.group(1)
+
+    m = re.search(
+        r'^image\s*=\s*"registry\.cloudflare\.com/([^/"\s]+)/([^:"\s]+):([^"\s]+)"',
+        text,
+        re.MULTILINE,
+    )
+    if m:
+        result["account_id"] = m.group(1)
+        result["image_name"] = m.group(2)
+        result["image_tag"] = m.group(3)
+
+    m = re.search(r'^max_instances\s*=\s*(\d+)', text, re.MULTILINE)
+    if m:
+        result["max_instances"] = m.group(1)
+
+    return result
+
+
+def _write_wrangler(values: dict) -> None:
+    """Update key deployment fields in wrangler.toml in-place."""
+    if not WRANGLER_FILE.exists():
+        return
+    text = WRANGLER_FILE.read_text(encoding="utf-8")
+
+    if "name" in values and values["name"]:
+        text = re.sub(
+            r'^(name\s*=\s*)"[^"]*"',
+            f'\\1"{values["name"]}"',
+            text,
+            flags=re.MULTILINE,
+        )
+
+    account_id = values.get("account_id", "").strip()
+    image_name = values.get("image_name", "cryptoinfo").strip() or "cryptoinfo"
+    image_tag = values.get("image_tag", "latest").strip() or "latest"
+    if account_id and not account_id.startswith(_WRANGLER_PLACEHOLDER_PREFIX):
+        new_image = f"registry.cloudflare.com/{account_id}/{image_name}:{image_tag}"
+        text = re.sub(
+            r'^(image\s*=\s*)"[^"]*"',
+            f'\\1"{new_image}"',
+            text,
+            flags=re.MULTILINE,
+        )
+
+    raw_instances = values.get("max_instances", "").strip()
+    if raw_instances and raw_instances.isdigit() and int(raw_instances) > 0:
+        text = re.sub(
+            r'^(max_instances\s*=\s*)\d+',
+            f'\\g<1>{raw_instances}',
+            text,
+            flags=re.MULTILINE,
+        )
+
+    WRANGLER_FILE.write_text(text, encoding="utf-8")
+
+
 # ── Dependency helper ─────────────────────────────────────────────────────────
 
 def _pip_install(log_cb) -> bool:
@@ -142,6 +213,8 @@ class LauncherApp:
     _BLUE = "#89b4fa"
     _GREEN = "#a6e3a1"
     _RED = "#f38ba8"
+    _PURPLE = "#7c3aed"
+    _PURPLE_HOVER = "#8b5cf6"
 
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
@@ -199,6 +272,9 @@ class LauncherApp:
         s.configure("TLabelframe", background=self._BG, bordercolor=self._BORDER)
         s.configure("TLabelframe.Label", background=self._BG, foreground=self._BLUE)
         s.configure("TFrame", background=self._BG)
+        s.configure("Deploy.TButton", background=self._PURPLE, foreground="#ffffff")
+        s.map("Deploy.TButton",
+              background=[("active", self._PURPLE_HOVER), ("disabled", self._BORDER)])
 
     # ── UI layout ─────────────────────────────────────────────────────────────
 
@@ -214,6 +290,7 @@ class LauncherApp:
         nb = ttk.Notebook(self.root)
         nb.pack(fill="both", expand=True, padx=12, pady=(6, 0))
         self._build_settings_tab(nb)
+        self._build_cloudflare_tab(nb)
         self._build_log_tab(nb)
 
         # Bottom bar
@@ -300,6 +377,31 @@ class LauncherApp:
             bg=self._BG, fg=self._BORDER, font=("Helvetica", 9),
         ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(0, 2))
 
+        # Wallet addresses section
+        wf = ttk.LabelFrame(inner, text="Wallet Addresses  (read-only tracking)", padding=10)
+        wf.pack(fill="x", **pad)
+
+        ttk.Label(wf, text="Bitcoin (BTC):").grid(row=0, column=0, sticky="w", pady=3)
+        self._wallet_btc_var = tk.StringVar()
+        ttk.Entry(wf, textvariable=self._wallet_btc_var, width=48).grid(
+            row=0, column=1, sticky="ew", padx=8, pady=3)
+
+        ttk.Label(wf, text="Ethereum (ETH):").grid(row=1, column=0, sticky="w", pady=3)
+        self._wallet_eth_var = tk.StringVar()
+        ttk.Entry(wf, textvariable=self._wallet_eth_var, width=48).grid(
+            row=1, column=1, sticky="ew", padx=8, pady=3)
+
+        ttk.Label(wf, text="Other address:").grid(row=2, column=0, sticky="w", pady=3)
+        self._wallet_other_var = tk.StringVar()
+        ttk.Entry(wf, textvariable=self._wallet_other_var, width=48).grid(
+            row=2, column=1, sticky="ew", padx=8, pady=3)
+
+        tk.Label(
+            wf,
+            text="Wallet addresses are stored locally for portfolio tracking only.",
+            bg=self._BG, fg=self._BORDER, font=("Helvetica", 9),
+        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(0, 2))
+
         # OpenAI section
         af = ttk.LabelFrame(
             inner, text="OpenAI  (optional – enables AI-powered analysis)", padding=10)
@@ -362,6 +464,135 @@ class LauncherApp:
         # Spacer at bottom of scrollable area
         ttk.Label(inner).pack(pady=4)
 
+    def _build_cloudflare_tab(self, nb: ttk.Notebook) -> None:
+        """Tab for Cloudflare Containers deployment configuration."""
+        outer = ttk.Frame(nb)
+        nb.add(outer, text="☁  Cloudflare Deploy")
+
+        # Scrollable inner area
+        canvas = tk.Canvas(outer, bg=self._BG, highlightthickness=0, width=520)
+        vsb = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        inner = ttk.Frame(canvas)
+        inner.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all")),
+        )
+        canvas.create_window((0, 0), window=inner, anchor="nw")
+        canvas.configure(yscrollcommand=vsb.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        vsb.pack(side="right", fill="y")
+
+        pad = {"padx": 12, "pady": 5}
+
+        # ── Cloudflare Credentials ──────────────────────────────────────────
+        cf = ttk.LabelFrame(inner, text="Cloudflare Credentials", padding=10)
+        cf.pack(fill="x", **pad)
+
+        ttk.Label(cf, text="Account ID:").grid(row=0, column=0, sticky="w", pady=3)
+        self._cf_account_id_var = tk.StringVar()
+        ttk.Entry(cf, textvariable=self._cf_account_id_var, width=42).grid(
+            row=0, column=1, sticky="ew", padx=8, pady=3)
+
+        ttk.Label(cf, text="API Token:").grid(row=1, column=0, sticky="w", pady=3)
+        self._cf_api_token_var = tk.StringVar()
+        ttk.Entry(cf, textvariable=self._cf_api_token_var, show="•", width=42).grid(
+            row=1, column=1, sticky="ew", padx=8, pady=3)
+
+        tk.Label(
+            cf,
+            text="Account ID: dash.cloudflare.com → select domain → Overview → API section.",
+            bg=self._BG, fg=self._BORDER, font=("Helvetica", 9),
+        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(0, 2))
+
+        tk.Label(
+            cf,
+            text="API Token: dash.cloudflare.com/profile/api-tokens (needs Workers & Containers permissions).",
+            bg=self._BG, fg=self._BORDER, font=("Helvetica", 9),
+        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(0, 2))
+
+        # ── Worker / Container Config ───────────────────────────────────────
+        wc = ttk.LabelFrame(inner, text="Worker / Container Config", padding=10)
+        wc.pack(fill="x", **pad)
+
+        ttk.Label(wc, text="Worker name:").grid(row=0, column=0, sticky="w", pady=3)
+        self._cf_worker_name_var = tk.StringVar()
+        ttk.Entry(wc, textvariable=self._cf_worker_name_var, width=28).grid(
+            row=0, column=1, sticky="w", padx=8, pady=3)
+
+        ttk.Label(wc, text="Image name:").grid(row=1, column=0, sticky="w", pady=3)
+        self._cf_image_name_var = tk.StringVar()
+        ttk.Entry(wc, textvariable=self._cf_image_name_var, width=28).grid(
+            row=1, column=1, sticky="w", padx=8, pady=3)
+
+        ttk.Label(wc, text="Image tag:").grid(row=2, column=0, sticky="w", pady=3)
+        self._cf_image_tag_var = tk.StringVar()
+        ttk.Entry(wc, textvariable=self._cf_image_tag_var, width=16).grid(
+            row=2, column=1, sticky="w", padx=8, pady=3)
+
+        ttk.Label(wc, text="Max instances:").grid(row=3, column=0, sticky="w", pady=3)
+        self._cf_max_instances_var = tk.StringVar()
+        ttk.Entry(wc, textvariable=self._cf_max_instances_var, width=8).grid(
+            row=3, column=1, sticky="w", padx=8, pady=3)
+
+        tk.Label(
+            wc,
+            text="These values update wrangler.toml. Run 'wrangler deploy' to apply changes.",
+            bg=self._BG, fg=self._BORDER, font=("Helvetica", 9),
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(0, 2))
+
+        # ── Deployment Actions ──────────────────────────────────────────────
+        da = ttk.LabelFrame(inner, text="Deployment Actions", padding=10)
+        da.pack(fill="x", **pad)
+
+        btn_row = tk.Frame(da, bg=self._BG)
+        btn_row.grid(row=0, column=0, columnspan=2, sticky="w", pady=4)
+
+        self._btn_cf_save = ttk.Button(
+            btn_row, text="💾  Save Config",
+            command=self._save_cloudflare_config)
+        self._btn_cf_save.pack(side="left", padx=(0, 6))
+
+        self._btn_cf_push = ttk.Button(
+            btn_row, text="🐳  Push Container",
+            command=self._deploy_push_container,
+            style="Deploy.TButton")
+        self._btn_cf_push.pack(side="left", padx=6)
+
+        self._btn_cf_deploy = ttk.Button(
+            btn_row, text="🚀  Deploy Worker",
+            command=self._deploy_worker,
+            style="Deploy.TButton")
+        self._btn_cf_deploy.pack(side="left", padx=6)
+
+        tk.Label(
+            da,
+            text="Push Container: builds & pushes the Docker image to Cloudflare's registry.\n"
+                 "Deploy Worker: runs 'wrangler deploy' to publish the Worker + container binding.",
+            bg=self._BG, fg=self._BORDER, font=("Helvetica", 9), justify="left",
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 2))
+
+        # ── Deploy Output ───────────────────────────────────────────────────
+        out_frame = ttk.LabelFrame(inner, text="Deploy Output", padding=10)
+        out_frame.pack(fill="both", expand=True, **pad)
+
+        self._cf_log_text = scrolledtext.ScrolledText(
+            out_frame,
+            bg="#11111b", fg=self._FG, insertbackground=self._FG,
+            font=("Courier", 9), wrap="word",
+            state="disabled", height=10,
+        )
+        self._cf_log_text.pack(fill="both", expand=True)
+
+        clear_row = tk.Frame(out_frame, bg=self._BG)
+        clear_row.pack(fill="x", pady=(4, 0))
+        ttk.Button(
+            clear_row, text="Clear",
+            command=self._clear_cf_log,
+        ).pack(side="right")
+
+        # Spacer
+        ttk.Label(inner).pack(pady=4)
+
     def _build_log_tab(self, nb: ttk.Notebook) -> None:
         frame = ttk.Frame(nb)
         nb.add(frame, text="📋  Log")
@@ -405,6 +636,14 @@ class LauncherApp:
         self._secret_key_var.set(
             _clean(e.get("SECRET_KEY", ""), "change-me"))
 
+        # Wallet addresses
+        self._wallet_btc_var.set(e.get("WALLET_BTC", ""))
+        self._wallet_eth_var.set(e.get("WALLET_ETH", ""))
+        self._wallet_other_var.set(e.get("WALLET_OTHER", ""))
+
+        # Cloudflare tab
+        self._load_cloudflare_settings()
+
     def _save_settings(self) -> None:
         values = {
             "EXCHANGE_ID":      self._exchange_var.get()       or "binance",
@@ -420,6 +659,9 @@ class LauncherApp:
             "PORT":             self._port_var.get()           or "5000",
             "SECRET_KEY":       self._secret_key_var.get()     or "change-me-to-a-random-string",
             "DEBUG":            "false",
+            "WALLET_BTC":       self._wallet_btc_var.get(),
+            "WALLET_ETH":       self._wallet_eth_var.get(),
+            "WALLET_OTHER":     self._wallet_other_var.get(),
         }
         try:
             _write_env(values)
@@ -428,6 +670,150 @@ class LauncherApp:
         except Exception as exc:
             messagebox.showerror("Save Error", f"Could not save settings:\n{exc}",
                                  parent=self.root)
+
+    # ── Cloudflare load / save / deploy ──────────────────────────────────────
+
+    def _load_cloudflare_settings(self) -> None:
+        """Populate Cloudflare tab from wrangler.toml + .env."""
+        w = _read_wrangler()
+        self._cf_worker_name_var.set(w.get("name", "cryptoinfo"))
+        raw_account = w.get("account_id", "")
+        self._cf_account_id_var.set(
+            "" if raw_account.startswith(_WRANGLER_PLACEHOLDER_PREFIX) else raw_account)
+        self._cf_image_name_var.set(w.get("image_name", "cryptoinfo"))
+        self._cf_image_tag_var.set(w.get("image_tag", "latest"))
+        self._cf_max_instances_var.set(w.get("max_instances", "2"))
+        # API token stored in .env
+        token = self._env.get("CLOUDFLARE_API_TOKEN", "")
+        self._cf_api_token_var.set(
+            "" if token.startswith(_PLACEHOLDER_PREFIX) else token)
+
+    def _save_cloudflare_config(self) -> None:
+        """Persist Cloudflare settings to wrangler.toml and API token to .env."""
+        account_id = self._cf_account_id_var.get().strip()
+        api_token = self._cf_api_token_var.get().strip()
+
+        if not account_id:
+            messagebox.showwarning(
+                "Missing Account ID",
+                "Please enter your Cloudflare Account ID before saving.",
+                parent=self.root,
+            )
+            return
+
+        wrangler_vals = {
+            "name": self._cf_worker_name_var.get().strip() or "cryptoinfo",
+            "account_id": account_id,
+            "image_name": self._cf_image_name_var.get().strip() or "cryptoinfo",
+            "image_tag": self._cf_image_tag_var.get().strip() or "latest",
+            "max_instances": self._cf_max_instances_var.get().strip() or "2",
+        }
+        raw_instances = wrangler_vals["max_instances"]
+        if not (raw_instances.isdigit() and int(raw_instances) > 0):
+            messagebox.showwarning(
+                "Invalid Max Instances",
+                "Max instances must be a positive integer (e.g. 1, 2, 3).",
+                parent=self.root,
+            )
+            return
+        try:
+            _write_wrangler(wrangler_vals)
+        except Exception as exc:
+            messagebox.showerror("Save Error",
+                                 f"Could not update wrangler.toml:\n{exc}",
+                                 parent=self.root)
+            return
+
+        # Persist API token to .env
+        env = _read_env()
+        env["CLOUDFLARE_API_TOKEN"] = api_token or "your_cloudflare_api_token_here"
+        try:
+            _write_env(env)
+        except Exception as exc:
+            messagebox.showerror("Save Error",
+                                 f"Could not update .env:\n{exc}",
+                                 parent=self.root)
+            return
+
+        self._cf_log("✔ Cloudflare config saved to wrangler.toml and .env\n")
+        messagebox.showinfo("Saved", "Cloudflare config saved successfully!",
+                            parent=self.root)
+
+    def _deploy_push_container(self) -> None:
+        """Run 'wrangler containers push <name>' in a background thread."""
+        name = self._cf_image_name_var.get().strip() or "cryptoinfo"
+        self._cf_log(f"🐳 Pushing container image '{name}'…\n")
+        self._btn_cf_push.config(state="disabled")
+        threading.Thread(
+            target=self._run_wrangler,
+            args=(["wrangler", "containers", "push", name],
+                  self._btn_cf_push),
+            daemon=True,
+        ).start()
+
+    def _deploy_worker(self) -> None:
+        """Run 'wrangler deploy' in a background thread."""
+        self._cf_log("🚀 Deploying Worker…\n")
+        self._btn_cf_deploy.config(state="disabled")
+        threading.Thread(
+            target=self._run_wrangler,
+            args=(["wrangler", "deploy"],
+                  self._btn_cf_deploy),
+            daemon=True,
+        ).start()
+
+    def _run_wrangler(self, cmd: list, target_button) -> None:
+        """Execute a wrangler command and stream output to the deploy log."""
+        api_token = self._cf_api_token_var.get().strip()
+        env = {**os.environ}
+        if api_token:
+            env["CLOUDFLARE_API_TOKEN"] = api_token
+
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                env=env,
+                cwd=str(HERE),
+            )
+            if proc.stdout is None:
+                raise RuntimeError("Failed to open subprocess stdout pipe.")
+            for line in proc.stdout:
+                self._cf_log(line)
+            proc.wait()
+            if proc.returncode == 0:
+                self._cf_log(f"✔ '{' '.join(cmd)}' completed successfully.\n")
+            else:
+                self._cf_log(
+                    f"✘ Command exited with code {proc.returncode}.\n"
+                    "Check the output above for details. If wrangler is not installed, "
+                    "run: npm install -g wrangler\n"
+                )
+        except FileNotFoundError:
+            self._cf_log(
+                "✘ 'wrangler' not found. Install it with: npm install -g wrangler\n"
+            )
+        except Exception as exc:
+            self._cf_log(f"✘ Error: {exc}\n")
+        finally:
+            self.root.after(0, lambda: target_button.config(state="normal"))
+
+    # ── Cloudflare log helpers ────────────────────────────────────────────────
+
+    def _cf_log(self, text: str) -> None:
+        def _do():
+            self._cf_log_text.config(state="normal")
+            self._cf_log_text.insert("end", text)
+            self._cf_log_text.see("end")
+            self._cf_log_text.config(state="disabled")
+        self.root.after(0, _do)
+
+    def _clear_cf_log(self) -> None:
+        self._cf_log_text.config(state="normal")
+        self._cf_log_text.delete("1.0", "end")
+        self._cf_log_text.config(state="disabled")
 
     # ── Bot lifecycle ─────────────────────────────────────────────────────────
 
@@ -555,7 +941,7 @@ class LauncherApp:
 
 def main() -> None:
     root = tk.Tk()
-    root.geometry("560x640")
+    root.geometry("600x720")
     LauncherApp(root)
     root.mainloop()
 
