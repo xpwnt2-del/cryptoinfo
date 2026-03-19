@@ -40,9 +40,6 @@ image = "registry.cloudflare.com/<CLOUDFLARE_ACCOUNT_ID>/cryptoinfo:latest"
 # Max number of container instances (scale to zero when idle)
 max_instances = 2
 
-# ── Cloudflare Pages static-asset project ─────────────────────────────────────
-pages_build_output_dir = "static"
-
 # ── Environment variables (set these in the Cloudflare dashboard) ──────────
 # Do NOT commit real secrets here – use the Cloudflare Pages / Workers
 # "Variables & Secrets" panel or `wrangler secret put` instead.
